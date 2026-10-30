@@ -11,6 +11,7 @@
 #                            netauth=, the site's network's passkey page
 # (the server's own configuration, the network's programs and the auth
 # page: server.rc)
+#   $web/source-pipeline/index.html  Finnish usage guide for Source Pipeline
 # $web is tcp443's (rc-httpd: plan2001-static gives a directory's
 # index.html and FILE.gz to a browser that takes it)
 rfork e
@@ -18,6 +19,8 @@ page=$1
 live=$2
 iso=$3
 net=$4
+guide=$5
+~ $#guide 0 && guide=-
 fn fail { echo SITE FAILED: $*; exit $1 }
 fn step { echo '###' $* }
 fn put {	# FILE TARGET: whole, or not at all
@@ -60,5 +63,12 @@ put $page $web/index.html
 rm -f $web/index.html.gz
 
 chmod 664 $web/index.html
-ls -l $web/index.html $web/iso $web/plan9-wasm32
+if(! ~ $guide -){
+	step Source Pipeline guide: $web/source-pipeline
+	d=$web/source-pipeline
+	mkdir -p $d || fail no $d
+	put $guide $d/index.html
+	chmod 664 $d/index.html
+}
+ls -l $web/index.html $web/iso $web/plan9-wasm32 $web/source-pipeline
 echo SITE-DONE

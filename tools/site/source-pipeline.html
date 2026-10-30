@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Suomenkielinen käyttöohje Source Pipeline -agenttikehitysputkeen.">
+<title>Source Pipeline — Plan2001</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f1ea;--fg:#1d1d1b;--dim:#68665f;--card:#fffdf8;--line:#c8c3b8;--accent:#176b43}
+@media(prefers-color-scheme:dark){:root{--bg:#151514;--fg:#e9e6df;--dim:#aaa69d;--card:#22221f;--line:#45443f;--accent:#72d49b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+header,main,footer{width:min(100% - 2rem,54rem);margin:auto}header{padding:1.2rem 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+a{color:var(--accent);text-underline-offset:3px}header a{color:var(--fg)}main{padding:2rem 0 3rem}h1{font-size:clamp(2rem,6vw,3.2rem);line-height:1.1;margin:.5rem 0 1rem}h2{margin-top:2.2rem}
+.lead{font-size:1.15rem;color:var(--dim);max-width:44rem}.notice{padding:1rem 1.2rem;border:1px solid var(--line);border-left:5px solid #bd7b16;border-radius:.5rem;background:var(--card)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}code{overflow-wrap:anywhere}pre{overflow:auto;padding:1rem;border-radius:.5rem;background:var(--card);border:1px solid var(--line);line-height:1.5}
+li{padding-left:.2rem;margin:.35rem 0}.flow{padding:1rem 1.2rem;background:var(--card);border:1px solid var(--line);border-radius:.5rem;font-weight:650;overflow-wrap:anywhere}.muted{color:var(--dim)}footer{padding:1.2rem 0 2rem;border-top:1px solid var(--line);color:var(--dim)}
+</style>
+</head>
+<body>
+<header><a href="/">Plan2001</a><nav aria-label="Murupolku"><a href="/">Etusivu</a> · <a href="/plan9-wasm32/">Plan9-wasm32 selaimessa</a></nav></header>
+<main>
+<h1>Source Pipeline</h1>
+<p class="lead">Gitistä riippumaton tapa kehittää samaa ohjelmaa peräkkäisillä AI-agenteilla. Jokainen työvuoro jatkaa edellisen hyväksytystä lähdepaketista.</p>
+
+<aside class="notice"><strong>Palvelun tila:</strong> tämä sivu on käyttöohje. Source Pipeline -palvelimen kirjoittavaa tuotantorajapintaa ei ole otettu käyttöön. Paikallinen PoC on testattu eristetyssä 9front-ympäristössä; älä lähetä tänne tunnuksia tai lähdekoodia.</aside>
+
+<h2>Työkierto</h2>
+<p class="flow">Agentti A → agentti B → agentti C → agentti A</p>
+<p>Palvelin antaa vuoron vain jonossa seuraavana olevalle agentille. Worker lataa hyväksytyn lähdepaketin, tarkistaa sen SHA-256-tiivisteen ja purkaa sen omalle koneelleen. Agentti tarkistaa ohjelman, korjaa testivirheitä tarvittaessa, tekee tehtävän ja testaa tuloksen. Vasta onnistuneen testin jälkeen koko uusi lähdepuu siirtyy seuraavaksi ohjelmatilaksi.</p>
+<p>Työ on sarjallista: vain yhdellä agentilla on kerrallaan aktiivinen muutosvuoro. Git-haaroja tai yhdistämisiä ei käytetä.</p>
+
+<h2>Käyttöönotto agenttikoneella</h2>
+<ol>
+<li>Asenna agenttikoneelle Python 3 ja Source Pipeline -worker. Plan 9 -palvelimelle ei asenneta Pythonia: palvelinosa on Plan 9 C/rc -ohjelma.</li>
+<li>Valmistele lähdepaketti ja testikomento. Testien pitää palauttaa nollasta poikkeava poistumiskoodi, jos ohjelma ei läpäise tarkistusta.</li>
+<li>Määritä agentille palvelimen osoite, agenttitunnus ja salainen token ympäristömuuttujalla <code>SP_TOKEN</code>. Älä lisää tokenia lähdekoodiin tai komentohistoriaan.</li>
+<li>Käynnistä workerin yksi työvuoro seuraavalla komennolla, kun ylläpitäjä on antanut käytössä olevan API-osoitteen ja tunnuksen:</li>
+</ol>
+<pre><code>export SP_TOKEN='agentin-salainen-token'
+python3 worker.py \
+  --url 'https://palvelin.example' \
+  --agent 'agentin-nimi' \
+  --agent-command 'oma-agentin-komento' \
+  --test-command 'oma-testikomento' \
+  --once</code></pre>
+<p><code>--agent-command</code> käynnistetään erikseen vaiheissa <code>VERIFY</code>, <code>REPAIR</code> ja <code>DEVELOP</code>. Vaihe, tehtävän tunniste, agentin nimi ja työtilan polku annetaan komennolle ympäristömuuttujissa <code>SP_PHASE</code>, <code>SP_TASK_ID</code>, <code>SP_AGENT</code> ja <code>SP_WORKSPACE</code>. Agentin tulee tehdä muutokset <code>SP_WORKSPACE</code>-hakemistoon.</p>
+
+<h2>Työvuoron päättyminen</h2>
+<p>Worker suorittaa määritellyt testit sekä ennen kehitystä että sen jälkeen. Jos testit eivät mene läpi, agentti saa rajatun määrän korjausyrityksiä. Onnistuneessa luovutuksessa worker lähettää koko ohjelmatilan palvelimelle. Jos worker katkeaa, työvuoron lease vanhenee ja sama tehtävä voidaan yrittää uudelleen.</p>
+<p>Tilatietoa voi näyttää julkisessa näkymässä ilman tunnuksia, mutta lähdepakettien lataaminen ja muuttaminen edellyttää HTTPS-yhteyttä, agenttitokenia ja voimassa olevaa työvuoroa. Palvelimella vastaanotettua lähdekoodia ei suoriteta.</p>
+
+<h2>Ylläpitäjän valmistelut</h2>
+<ul>
+<li>Ota käyttöön HTTPS ja varmista, että jokaisella workerilla on oma agenttitoken.</li>
+<li>Määritä agenttien järjestys ja lisää työjonoon tehtävät.</li>
+<li>Varmista levytila, pakettikoko, rc-httpd:n tiedosto-oikeudet ja varmuuskopiointi.</li>
+<li>Testaa siirron katkeaminen, vanheneva lease, virheellinen tiiviste ja palvelimen uudelleenkäynnistys ennen tuotantokäyttöä.</li>
+</ul>
+<p class="muted">PoC:n lähdekoodi, paikalliset testitulokset ja Plan 9 -yhteensopivuuden arvio löytyvät projektin lähdepuusta. Tämä käyttöohje ei tarkoita, että plan2001.comin tuotantorajapinta olisi jo aktiivinen.</p>
+</main>
+<footer><a href="/">Plan2001</a> · <a href="/plan9-wasm32/">Plan9-wasm32 selaimessa</a></footer>
+</body>
+</html>
