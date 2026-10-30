@@ -9,7 +9,7 @@
 # built there, the auth page, rc-httpd, the certificate, cpustart:
 # docs/plan2001-server.md).  -n: the machine's plan9.ini says netauth=
 # (docs/network.md).  -s: server.rc alone
-#   tools/site/deploy [-p | -s] [-n] [ADMIN-IP]	-p the front page alone; default 10.201.0.1; PLAN2001=~/Plan2001
+#   tools/site/deploy [-p | -s] [-n] [ADMIN-IP]	-p the public pages only; default 10.201.0.1; PLAN2001=~/Plan2001
 set -e
 here=$(cd "$(dirname "$0")" && pwd); root=$(dirname "$(dirname "$here")")
 live=/mnt/term$root/build/dist/live iso=/mnt/term$root/build/dist/plan9-wasm32.iso
@@ -28,17 +28,18 @@ ping -c1 -W3 "$admin" >/dev/null 2>&1 || { echo "deploy: $admin does not answer:
 # the front page with the ISO's size and the tree it is
 s=$root/build/site
 if [ -n "$site" ]; then
-	rm -rf "$s"; mkdir -p "$s"
+	mkdir -p "$s/source-pipeline"
 	size=$(( $(stat -c %s "$d/plan9-wasm32.iso") / 1048576 ))
 	v="tree $(git -C "$root" rev-parse --short tree) · $(date -u +%Y-%m-%d)"
 	sed "s|@ISO@|plan9-wasm32.iso, $size MB|; s|@VERSION@|$v|" "$here/index.html" >"$s/index.html"
+	cp "$here/source-pipeline.html" "$s/source-pipeline/index.html"
 fi
 run() {	# a script there, as admin; its last line says it is done
 	out=$("$T" -h "$admin" -a "tcp!$admin!567" -u admin -P "$sec/admin.pass" -W 20 -T "${TMO:-7200}" -c "$1" 2>&1 || true)
 	echo "$out"
 	echo "$out" | grep -q "$2" || { echo "deploy: not installed" >&2; exit 1; }
 }
-[ -z "$site" ] || run "rc /mnt/term$here/site.rc /mnt/term$s/index.html $live $iso $net" SITE-DONE
+[ -z "$site" ] || run "rc /mnt/term$here/site.rc /mnt/term$s/index.html $live $iso $net /mnt/term$s/source-pipeline/index.html" SITE-DONE
 if [ -n "$server" ]; then
 	TMO=${TMO:-900} run "rc /mnt/term$here/server.rc /mnt/term$root" SERVER-DONE
 	# the tunnel answers with aux/ethernetd running: say so, before server.rc's switch stops it
