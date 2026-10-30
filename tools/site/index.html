@@ -3,16 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>9front on wasm32</title>
-<meta name="description" content="9front for the wasm32 architecture: the web browser as the machine.">
+<title>Plan2001</title>
+<meta name="description" content="Plan2001: Plan 9 experiments, including a 9front machine running in your browser.">
 <style>
 	:root { --bg: #f4f1ea; --fg: #1d1d1b; --dim: #6b6862; --ring: #1d1d1b; --face: #fffdf8; --glow: #2a9d5c; }
 	@media (prefers-color-scheme: dark) {
 		:root { --bg: #151514; --fg: #e9e6df; --dim: #8d8a83; --ring: #e9e6df; --face: #22221f; --glow: #4cc884; }
 	}
 	html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
-	body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 40px;
+	body { display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 24px;
 		font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; box-sizing: border-box; }
+	header { width: min(100%, 58rem); display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+	.brand { font-weight: 750; font-size: 19px; letter-spacing: .04em; text-decoration: none; }
+	nav { display: flex; gap: clamp(12px, 3vw, 28px); flex-wrap: wrap; justify-content: flex-end; }
+	nav a { color: inherit; text-underline-offset: 3px; }
+	.intro { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 	main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 5vw, 48px) clamp(24px, 8vw, 96px); justify-items: center; align-items: start; }
 	a { color: inherit; }
 	main a { text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 14px;
@@ -46,6 +51,11 @@
 </style>
 </head>
 <body>
+<header><a class="brand" href="/">Plan2001</a><nav aria-label="Main navigation">
+	<a href="/plan9-wasm32/">Plan9-wasm32 in browser</a>
+	<a href="/source-pipeline/">Source Pipeline</a>
+</nav></header>
+<h1 class="intro">Plan2001 — Plan 9 projects and experiments</h1>
 <main>
 	<a id="cd" href="/iso/plan9-wasm32.iso" download title="Download the ISO image">
 		<svg viewBox="0 0 200 200" aria-hidden="true">
@@ -170,7 +180,7 @@
 	if (location.hash === '#help') howto.showModal();
 </script>
 <footer>
-	<p>9front for the wasm32 architecture: the web browser is the machine.</p>
+	<p>Plan 9 projects and experiments. <a href="/plan9-wasm32/">Run Plan9-wasm32 in your browser</a> · <a href="/source-pipeline/">Read about Source Pipeline</a>.</p>
 	<p><a href="https://github.com/pereuna/plan9-wasm32">Source</a> · <span class="v">@VERSION@</span><br>
 	Plan 9 is a trademark of the Plan 9 Foundation; this project is not affiliated with it.</p>
 </footer>
