@@ -32,8 +32,11 @@ in promiscuous mode sees only its own, broadcast and multicast.
       further than this host's namespace - the tests' services, and the
       machines to each other), and a DHCP server here for the machines - their
       address, mask and gateway, and 10.0.2.2 as their auth server
-      (Plan 9's DHCP option, ipconfig's auth=).  CMD after -- runs in
-      that namespace (the tests' services: tools/test/authsrv 10.0.2.2)
+      (Plan 9's DHCP option, ipconfig's auth=). CMD after -- runs in
+      that namespace (the tests' services: tools/test/authsrv 10.0.2.2).
+      The DHCP also gives DNS servers: GATEWAY_DNS, default 1.1.1.1 and
+      8.8.8.8.  With -t, the host's forwarding and NAT (tools/site/ubuntu)
+      carry every machine to the Internet.
   -t NAME  a TAP device already made, e.g. one bridged or NATed to the
       host's LAN (ip tuntap add NAME mode tap user $USER, as root): its
       network's DHCP, not this one's
@@ -44,6 +47,14 @@ in promiscuous mode sees only its own, broadcast and multicast.
   tools/gateway [-p PORT] [-o ORIGIN]... [-n | -t NAME [-d]] [-- CMD...]	PORT 17080
 """
 import asyncio, base64, ctypes, fcntl, hashlib, ipaddress, os, re, shutil, socket, struct, subprocess, sys, tempfile, time
+
+# the machines' DNS servers (DHCP option 6): a public pair by default, or GATEWAY_DNS
+dns = []
+for a in os.environ.get('GATEWAY_DNS', '1.1.1.1 8.8.8.8').replace(',', ' ').split():
+	try:
+		dns.append(socket.inet_aton(a))
+	except OSError:
+		sys.exit('gateway: GATEWAY_DNS: not an IPv4 address: ' + a)
 
 port = 17080
 tapname = None
@@ -207,7 +218,10 @@ def dhcpin(src, f):
 	vend = bytes([129, 4]) + GW.packed	# Plan 9's: its auth server (ipconfig: auth=)
 	o = bytes([53, 1, reply, 54, 4]) + GW.packed
 	if reply != 6:
-		o += bytes([51, 4]) + struct.pack('!I', 86400) + bytes([1, 4]) + NET.netmask.packed + bytes([3, 4]) + GW.packed + bytes([43, len(vend)]) + vend
+		o += bytes([51, 4]) + struct.pack('!I', 86400) + bytes([1, 4]) + NET.netmask.packed + bytes([3, 4]) + GW.packed
+		if dns:
+			o += bytes([6, 4 * len(dns)]) + b''.join(dns)
+		o += bytes([43, len(vend)]) + vend
 	o += b'\xff'
 	bootp = bytes([2, 1, 6, 0]) + b[4:8] + b'\0\0' + b[10:12] + b'\0'*4 + (yi.packed if reply != 6 else b'\0'*4) + GW.packed + b'\0'*4 + b[28:44] + b'\0'*192 + b'\x63\x82\x53\x63' + o
 	udpl = 8 + len(bootp)

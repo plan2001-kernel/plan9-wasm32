@@ -1,5 +1,11 @@
 # Plan9-wasm32: plan
 
+> **Host status:** plan2001.com runs **Ubuntu Linux** (owner-confirmed
+> 2026-11-03; the browser service was restored 2026-11-13): nginx serves the
+> launcher, the ISO and the machine, and `tools/gateway` routes every
+> machine's Ethernet with DHCP, DNS and NAT.  The old Plan 9 host and
+> passkey gateway are retired (`docs/plan2001-server.md`).
+
 Plan9-wasm32 is Plan 9 for the wasm32 architecture, the web browser as
 the machine.  It is based on 9front (http://9front.org), a project of its
 own; "9front" here means that project.  It is installed and booted as
@@ -8,7 +14,8 @@ own; "9front" here means that project.  It is installed and booted as
 ## Installing and booting
 
 1. **Live image.** The browser loads https://plan2001.com/plan9-wasm32/
-   (a directory of its own: the browser's trusted features - OPFS,
+   (or the local `tools/serve` at http://127.0.0.1:18300/; a directory of
+   its own: the browser's trusted features - OPFS,
    WebAuthn, workers - need a secure origin, which file:// is not; offline
    is a small server on localhost).  It gets a minimal live image, as
    9front's ISO: the kernel (9wasm32.wasm), its boot file system
@@ -22,8 +29,9 @@ own; "9front" here means that project.  It is installed and booted as
    index.html, platform.js, 9wasm32.wasm, its bootfs and plan9.ini.  The
    distribution is the live image's, as 9front's is on its ISO: served
    from the same directory, read by the machine as a read-only disk.
-3. **Boot from the disk.** Next time the page at the server is a small
-   loader: if the disk's esp has the boot materials, it boots them - the
+3. **Boot from the disk.** Next time the machine page
+   (`/plan9-wasm32/boot/`) is a small loader: if the disk's esp has the
+   boot materials, it boots them - the
    firmware, the kernel and plan9.ini are the disk's, so the system
    changes only when it is installed again - else the live image.
 4. **Again and again.** The disk can be written over as often as needed;
@@ -68,40 +76,33 @@ own; "9front" here means that project.  It is installed and booted as
    -r reboots; tools/test/run's install does it all with a small ISO.
 5. The loader page (done, 2026-10-06): the page boots the disk's FAT -
    its own firmware, kernel and plan9.ini - else the live image.
-6. https://plan2001.com/plan9-wasm32/ (done, 2026-10-06): the live image
-   and the distribution's ISO (720 MB, read with range requests); it
-   boots to rio over the Internet.  ?iso=file boots a copy of the ISO on
-   one's own computer instead.
+6. Public demo (2026-10-06; restored on Ubuntu 2026-11-13): the live
+   image and the distribution's ISO (read with range requests); it boots
+   to rio over the Internet.  The server boots its own ISO by default;
+   ?iso=file boots a copy of the ISO on one's own computer instead.
 7. The network as 9front's (done, 2026-10-07): #l0, an Ethernet card
    (etherwasm32.c) in place of the WebSocket /net/tcp the import had; 9front's
    devether and IP stack (#I) over it, and ipconfig, cs and the installer's
    confignet as on a PC.  Its wire is a WebSocket to the origin's /ether;
    tools/gateway is the other end - a switch and a TAP, a network of its
    own with DHCP (-n) for offline and the tests, or the host's (-t).
-   https://plan2001.com/plan9-wasm32/'s gateway is step 9's.
+   The public demo uses step 9's gateway (`/ether`, nginx to tools/gateway).
 8. The distribution as 9front's (done, 2026-10-08): the tree
    branch (tools/treebranch), a snapshot of 9front's release and this tree; the ISO
    (tools/dist) its files and .git, the base system and the tools built
    (tools/dist.base); installed from a local copy of the ISO, then bind
    -ac /dist/9front /; cd /sys/src; mk install on the machine - the build
    is the PoC's test, people's to run; tools/test/run dist installs the
-   ISO and checks its git and a small build.  The ISO is on
-   plan2001.com/iso, the front page has its CD, power, BIOS and help.
+   ISO and checks its git and a small build. The former public ISO
+   download and demo front page have been removed; use the local build.
    The machine's mk install stopped at /sys/src/ape, before cmd: APE
    had no wasm32 (pcc's objtypes, ap/wasm32, lib9's, the syscall stubs,
    /wasm32/include/ape), and the ISO no /wasm32/lib/ape, bin/ape ...
    Ported 2026-10-13; tools/test/run ape.
-9. The site's network (in progress, 2026-10-08; docs/network.md): a
-   machine on plan2001.com reaches the internet (the web and git) through
-   the server once its owner has shown a passkey - auth.plan2001.com, an
-   origin apart from the machine's, the firmware asking before the disk's
-   runs; a ticket for the tab.  The server's end is 9front's own:
-   aux/ethernetd (DHCP, a filter, limits, a log; a pkt interface and the
-   stack's NAT) and aux/etherws (sys/src/cmd/ethergw); tools/test/run
-   ethergw tests it on a machine.  The server's side to do:
-   docs/plan2001-server.md.  Found on the way, open: after
-   rfork(RFPROC|RFFDG|RFMEM) the parent's read of a TCP connection
-   (listen1's, fd 0) never returned, though the data was there (etherws
-   forks without RFMEM, so it does not meet it); and alarm() did not
-   interrupt a libthread proc's read of a pipe (ethernetd's timer has no
-   notes).
+9. The site's network (done, 2026-11-13; docs/network.md): plan2001.com
+   runs Ubuntu Linux; nginx proxies `/ether` to `tools/gateway` on a TAP,
+   with DHCP, DNS and NAT for every machine.  There is no passkey and no
+   network prompt: the card connects at boot and the Internet works by
+   default.  The old native Plan 9 gateway and passkey origin are retired.
+   Deployment and the host's side: docs/plan2001-server.md and
+   `tools/site/ubuntu/`.

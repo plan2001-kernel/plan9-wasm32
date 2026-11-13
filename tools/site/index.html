@@ -52,8 +52,7 @@
 </head>
 <body>
 <header><a class="brand" href="/">Plan2001</a><nav aria-label="Main navigation">
-	<a href="/plan9-wasm32/">Plan9-wasm32 in browser</a>
-	<a href="/source-pipeline/">Source Pipeline</a>
+	<a href="/plan9-wasm32/boot/">Plan9-wasm32 in browser</a>
 </nav></header>
 <h1 class="intro">Plan2001 — Plan 9 projects and experiments</h1>
 <main>
@@ -75,7 +74,7 @@
 		<span class="label">Download ISO</span>
 		<span class="sub">@ISO@</span>
 	</a>
-	<a id="power" href="/plan9-wasm32/" title="Power on: boot the machine in this browser">
+	<a id="power" href="/plan9-wasm32/boot/" title="Power on: boot the machine in this browser">
 		<svg viewBox="0 0 200 200" aria-hidden="true">
 			<rect x="8" y="8" width="184" height="184" rx="40" fill="var(--face)" stroke="var(--ring)" stroke-width="4"/>
 			<path d="M70 66 A50 50 0 1 0 130 66" fill="none" stroke="var(--ring)" stroke-width="12" stroke-linecap="round"/>
@@ -83,7 +82,7 @@
 			<circle class="led" cx="162" cy="162" r="7"/>
 		</svg>
 		<span class="label">Power on</span>
-		<span class="sub">boots from the browser's disk, or the CD you give it</span>
+		<span class="sub">boots from the browser's disk, or the CD image on this site</span>
 	</a>
 	<a id="bios" href="#bios" title="BIOS: the boot order and devices">
 		<svg viewBox="0 0 200 200" aria-hidden="true">
@@ -113,8 +112,10 @@
 	<form method="dialog">
 		<h2>Installing</h2>
 		<ol>
-			<li><b>Download the ISO</b> (the CD), once.</li>
-			<li><b>Power on</b>: the browser's disk is empty, so the machine asks for the CD - choose the ISO.</li>
+			<li><b>Power on</b>: the machine boots the CD image from this site, or the system on the browser's disk.
+			The ISO is also there to <a href="/iso/plan9-wasm32.iso" download>download</a>, once, if you want a local copy.</li>
+			<li>The virtual Ethernet is connected by default: the machine gets its address, DNS and gateway from
+			this server, and its traffic is routed to the Internet. There is no passkey and no network prompt.</li>
 			<li>In rio: <code>inst/start</code>. The install is <a href="https://fqa.9front.org/fqa4.html">9front's</a>,
 			except that copydist copies the base system, the tools and the source with its git, not the whole
 			system built. Its reboot boots the installed system from the disk.</li>
@@ -141,13 +142,8 @@
 			<label><input type="checkbox" name="disk"> Disk (this browser's)</label>
 			<label><input type="checkbox" name="cd"> CD (the ISO you downloaded)</label>
 		</fieldset>
-		<fieldset>
-			<legend>Network</legend>
-			<label><input type="radio" name="net" value="ask"> Ask at boot (a passkey)</label>
-			<label><input type="radio" name="net" value="off"> Off</label>
-		</fieldset>
 		<p class="note">Kept in this browser. "Boot once from CD" installs anew without changing them: the
-		installer's reboot boots as they say.</p>
+		installer's reboot boots as they say. The virtual Ethernet is always connected.</p>
 		<div class="buttons">
 			<button value="cancel" formnovalidate>Cancel</button>
 			<button value="once">Boot once from CD</button>
@@ -165,14 +161,13 @@
 		f.order.value = (b.order ?? ['disk', 'cd']).join(',');
 		f.disk.checked = b.disk !== false;
 		f.cd.checked = b.cd !== false;
-		f.net.value = b.net === 'off' ? 'off' : 'ask';
 		d.showModal();
 	});
 	d.addEventListener('close', () => {
 		if (d.returnValue === 'save') {
-			try { localStorage.setItem(key, JSON.stringify({ order: f.order.value.split(','), disk: f.disk.checked, cd: f.cd.checked, net: f.net.value })); } catch (e) {}
+			try { localStorage.setItem(key, JSON.stringify({ order: f.order.value.split(','), disk: f.disk.checked, cd: f.cd.checked })); } catch (e) {}
 		} else if (d.returnValue === 'once')
-			location.href = '/plan9-wasm32/?boot=net&iso=file';
+			location.href = '/plan9-wasm32/boot/?boot=net';
 	});
 	const howto = document.getElementById('howto');
 	document.getElementById('help').addEventListener('click', (e) => { e.preventDefault(); howto.showModal(); });
@@ -180,8 +175,8 @@
 	if (location.hash === '#help') howto.showModal();
 </script>
 <footer>
-	<p>Plan 9 projects and experiments. <a href="/plan9-wasm32/">Run Plan9-wasm32 in your browser</a> · <a href="/source-pipeline/">Read about Source Pipeline</a>.</p>
-	<p><a href="https://github.com/pereuna/plan9-wasm32">Source</a> · <span class="v">@VERSION@</span><br>
+	<p>Plan 9 projects and experiments. <a href="/plan9-wasm32/">Run Plan9-wasm32 in your browser</a>.</p>
+	<p><a href="https://github.com/plan2001-kernel/plan9-wasm32">Source</a> · <span class="v">@VERSION@</span><br>
 	Plan 9 is a trademark of the Plan 9 Foundation; this project is not affiliated with it.</p>
 </footer>
 </body>

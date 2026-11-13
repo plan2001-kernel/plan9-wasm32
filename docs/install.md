@@ -1,5 +1,12 @@
 # Installing Plan9-wasm32
 
+> **Host status:** plan2001.com runs **Ubuntu Linux** (owner-confirmed
+> 2026-11-03; the browser service was restored 2026-11-13).  The old Plan 9
+> host, rc-httpd/tlssrv, rcpu/9pterm, WireGuard administration and passkey
+> gateway are retired; the public instance is nginx on Ubuntu
+> (`docs/plan2001-server.md`).  The instructions below are the same for the
+> public instance and a local build.
+
 As 9front is installed on a PC: boot the live image, run `inst/start`,
 reboot from the disk; then the machine builds its own system from its
 source, and updates it with git.
@@ -26,11 +33,12 @@ A binary base, the tools, and the whole source with its git:
   ISO has its repository.  `tools/dist` builds the whole
   release here too (`build/dist/failed`: what does not build yet): a
   check of the source, and where the base comes from.
-- **On the site** the ISO is `https://plan2001.com/iso/`, as 9front's is
-  `9front.org/iso/`: downloaded once, installed from the computer it is
-  on (`?iso=file`).  The page and its kernel come from the site, as a
-  machine's firmware: `index.html` is the browser tab's (the origin's)
-  boot, and it gives the machine over to the ISO.
+- **Public distribution:** https://plan2001.com/plan9-wasm32/ downloads the
+  ISO from `/iso/` and boots it from the server (HTTP Range requests), or
+  the page boots the installed system from the browser's disk.  Locally,
+  serve `build/dist/live` with `tools/serve -d build/dist/live`, or use a
+  local ISO with `?iso=file`.  The page and kernel are the browser guest's
+  firmware, independently of the HTTP host's operating system.
 
 After the install, on the machine (as 9front's sysupdate):
 
@@ -39,12 +47,11 @@ After the install, on the machine (as 9front's sysupdate):
     mk install                  # the rest of the system, built here
 
 and to update it, from this repository (the machine's network must
-reach GitHub: on plan2001.com the site's, with a passkey - the firmware
-asks at boot, docs/network.md; on one's own computer `tools/gateway`,
-passt's):
+reach GitHub; the public instance and local `tools/gateway` both provide
+DHCP, DNS and NAT by default):
 
     bind -ac /dist/9front /
-    cd / && git/pull            # origin: https://github.com/pereuna/plan9-wasm32, branch tree
+    cd / && git/pull            # origin: https://github.com/plan2001-kernel/plan9-wasm32, branch tree
     cd /sys/src/cmd
     for(i in cc 3c 3a 3l cpp mk) @{cd $i && mk install}
     mk pcc.install yacc.install # the tools first
@@ -55,7 +62,7 @@ want of its compilers what the ones the machine has do not know yet (APE
 needed pcc's wasm32 and 3l's $M, 2026-10-13).
 
 A machine without `/dist/9front` gets it with
-`git/clone -b tree https://github.com/pereuna/plan9-wasm32 /dist/9front`.
+`git/clone -b tree https://github.com/plan2001-kernel/plan9-wasm32 /dist/9front`.
 The kernel, once built (`cd /sys/src/9/wasm32; mk install`), goes onto
 the boot FAT as inst/bootsetup puts it there.
 

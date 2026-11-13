@@ -1,5 +1,13 @@
 # Plan9-wasm32
 
+> **Host status — owner-confirmed 2026-11-03, restored 2026-11-13:**
+> plan2001.com runs **Ubuntu Linux**. The browser machine is served by nginx
+> from `/var/www/plan2001`; its virtual Ethernet is a WebSocket to
+> `tools/gateway` on the same host (TAP, DHCP, DNS, NAT to the Internet;
+> `docs/plan2001-server.md`).  The old Plan 9 host, rc-httpd/tlssrv,
+> rcpu/9pterm, WireGuard administration and passkey gateway are retired and
+> are not used on this host.
+
 Plan 9 for the wasm32 architecture: a kernel and its platform that run a
 9front-based system in a web browser.  The browser is the machine: its
 firmware is a page (`platform.js`, `index.html`), its processors Web
@@ -48,13 +56,16 @@ DHCP, TCP and the rest over it (`docs/kernel.md`):
     tools/gateway -n         # a network of its own, 10.0.2.0/24, DHCP, no way out (the tests)
     tools/gateway -t tap0    # a TAP made by root, bridged or NATed to the LAN
 
-On a public site the other end is the site's own gateway, `aux/ethernetd`:
-the web and git only, for a machine whose owner has shown a passkey on the
-site's auth page (docs/network.md).
+The public instance is https://plan2001.com/plan9-wasm32/ (Ubuntu Linux,
+nginx, no passkey): the launcher serves the ISO from `/iso/`, the machine
+from `/plan9-wasm32/boot/`, and the virtual Ethernet at `/ether`.  The
+server routes every machine's traffic with DHCP and NAT, and the ethernet
+and Internet are connected by default.
 
-Try it: https://plan2001.com/plan9-wasm32/ (a live image, as 9front's ISO:
-`inst/start` installs onto the browser's disk; `?iso=file` reads a copy of
-the ISO on your own computer).
+Locally: `tools/serve` or `tools/serve -d build/dist/live` at
+http://127.0.0.1:18300/; `inst/start` installs onto the browser's disk;
+`?iso=file` reads a local copy of the ISO.  Deployment to the Ubuntu host:
+`tools/site/ubuntu/deploy` (`docs/plan2001-server.md`).
 
 Status and plan: docs/plan.md.
 

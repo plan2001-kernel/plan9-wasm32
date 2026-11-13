@@ -1,0 +1,61 @@
+#!/bin/bash
+# Deploy plan9-wasm32 to plan2001.com (Ubuntu, nginx) and set up the
+# virtual Ethernet gateway there.  Uploads the ISO, the launcher page
+# (/plan9-wasm32/), the machine (/plan9-wasm32/boot/) and the simple front
+# page (/), then installs nginx and the gateway's systemd service.
+#   tools/site/ubuntu/deploy [SSH-HOST]	default plan2001.com
+# Needs: the SSH host as ~/.ssh/config has it (sudo without a password), and
+# build/dist (tools/dist) for the ISO and the machine's files.
+set -e -o pipefail
+here=$(cd "$(dirname "$0")" && pwd); root=$(dirname "$(dirname "$(dirname "$here")")")
+host=${1:-plan2001.com}
+tree=$root/build/dist
+live=$root/build/live
+iso=$tree/plan9-wasm32.iso
+site=$root/build/site-ubuntu
+
+[ -s "$iso" ] || { echo "deploy: no $iso (PLAN9=... tools/dist)" >&2; exit 1; }
+[ -s "$live/9wasm32.wasm" ] || { echo "deploy: no $live/9wasm32.wasm (tools/build)" >&2; exit 1; }
+[ -s "$live/9wasm32.fs" ] || { echo "deploy: no $live/9wasm32.fs (tools/build)" >&2; exit 1; }
+
+v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
+size=$(( $(stat -c %s "$iso") / 1048576 ))
+
+rm -rf "$site"; mkdir -p "$site/iso" "$site/plan9-wasm32/boot"
+
+cp "$root/tools/site/front.html" "$site/index.html"
+sed "s|@ISO@|plan9-wasm32.iso, $size MB|; s|@VERSION@|$v|" \
+	"$root/tools/site/index.html" >"$site/plan9-wasm32/index.html"
+sed "s|@VERSION@|$v|" "$root/sys/src/9/wasm32/kernel.html" >"$site/plan9-wasm32/boot/index.html"
+cp "$root/sys/src/9/wasm32/platform.js" "$live/9wasm32.wasm" "$live/9wasm32.fs" "$site/plan9-wasm32/boot/"
+printf 'cdboot=yes\niso=/iso/plan9-wasm32.iso\n' >"$site/plan9-wasm32/boot/plan9.ini"
+ln "$iso" "$site/iso/plan9-wasm32.iso"
+for f in "$site"/plan9-wasm32/boot/* "$site"/plan9-wasm32/index.html "$site"/index.html; do
+	[ "${f%.gz}" = "$f" ] && gzip -9 -n -k "$f"
+done
+
+echo "deploy: $host: uploading $(du -sh "$site" | cut -f1)"
+tar -C "$site" -cf - . | ssh "$host" 'cat >/tmp/plan9-wasm32-site.tar'
+ssh "$host" 'sudo tar -C /var/www/plan2001 -xf /tmp/plan9-wasm32-site.tar && sudo chown -R root:root /var/www/plan2001 && rm -f /tmp/plan9-wasm32-site.tar'
+
+tar -cf - -C "$here" nginx-plan2001.conf plan9-gateway.service gateway-net-up gateway-net-down \
+	-C "$root/tools" gateway |
+	ssh "$host" 'mkdir -p /tmp/plan9-wasm32-deploy && tar -C /tmp/plan9-wasm32-deploy -xf -'
+ssh "$host" '
+set -e
+sudo install -d /opt/plan9-wasm32
+sudo install -m 755 /tmp/plan9-wasm32-deploy/gateway /opt/plan9-wasm32/gateway
+sudo install -m 755 /tmp/plan9-wasm32-deploy/gateway-net-up /opt/plan9-wasm32/gateway-net-up
+sudo install -m 755 /tmp/plan9-wasm32-deploy/gateway-net-down /opt/plan9-wasm32/gateway-net-down
+sudo install -m 644 /tmp/plan9-wasm32-deploy/plan9-gateway.service /etc/systemd/system/plan9-gateway.service
+sudo install -m 644 /tmp/plan9-wasm32-deploy/nginx-plan2001.conf /etc/nginx/sites-available/plan2001
+sudo nginx -t
+sudo systemctl daemon-reload
+sudo systemctl enable plan9-gateway >/dev/null
+sudo systemctl restart plan9-gateway
+sudo systemctl reload nginx
+rm -rf /tmp/plan9-wasm32-deploy
+echo deployed
+'
+
+echo "deploy: https://$host/plan9-wasm32/"

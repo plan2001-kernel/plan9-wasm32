@@ -1,90 +1,68 @@
-# plan2001.com's server: what the plan9-wasm32 demo needs
+# plan2001.com server (Ubuntu Linux)
 
-A request to Plan2001's side (its repository and its tools run the
-server): plan2001.com is, for now, plan9-wasm32's demo only. Its
-network (`docs/network.md`) needs the following on the server, and the
-Plan2001-specific services go away. What plan9-wasm32's own deploy puts on
-the server (`tools/site/deploy`) is listed last.
+**Owner-confirmed 2026-11-03; the browser service was restored 2026-11-13.**
 
-## Added
+plan2001.com runs **Ubuntu Linux**, not Plan 9.  The old Plan 9 host,
+rc-httpd/tlssrv routing, rcpu/9pterm administration, WireGuard tunnel and
+the native `aux/ethernetd` passkey gateway are retired.  The files
+`tools/site/deploy`, `tools/site/server.rc`, `tools/site/site.rc` and the
+invitation scripts describe that retired host and are not used here.
 
-1. **DNS** (Cloudflare, by the owner):
-   - `auth.plan2001.com` A 82.70.55.84, DNS only (not proxied);
-   - `_acme-challenge.auth.plan2001.com` CNAME
-     `_acme-challenge.auth.cpu.plan2001.com` (the server's own zone answers
-     the challenge, as `_acme-challenge.plan2001.com`'s does now).
-2. **The certificate**: one for both names, as tlssrv takes one: a CSR with
-   the alt name (libsec's `X509rsareq` makes the names after the first
-   comma subjectAltNames):
+## What is served
 
-        auth/rsa2csr 'CN=plan2001.com,auth.plan2001.com' /sys/lib/tls/...key >plan2001.com.csr
+nginx (`tools/site/ubuntu/nginx-plan2001.conf`) serves from
+`/var/www/plan2001`:
 
-   and `certrenew` renewing it with both challenges.
-3. **rc-httpd** (Plan2001's `select-handler`):
-   - by `$SERVER_NAME`: `auth.plan2001.com` is its own site, the
-     directory `/sys/lib/plan2001/auth` (plan9-wasm32's
-     `tools/site/auth.html` as its `index.html`), with the same headers
-     as the machine's (COOP, COEP);
-   - `GET /auth` on `auth.plan2001.com` and `GET /ether` on `plan2001.com`,
-     WebSocket upgrades only:
+- `/` — the simple front page (`tools/site/front.html`), with a link to
+  the browser machine.
+- `/plan9-wasm32/` — the launcher (`tools/site/index.html`): download the
+  ISO, power on, BIOS settings (boot order and devices), Help.
+- `/plan9-wasm32/boot/` — the machine's firmware (`kernel.html` as
+  `index.html`, `platform.js`), its kernel, boot file system and
+  `plan9.ini`.  `plan9.ini` boots the server's ISO by default
+  (`cdboot=yes`, `iso=/iso/plan9-wasm32.iso`); a disk with an installed
+  system boots from its own 9fat and firmware instead.
+- `/iso/plan9-wasm32.iso` — the distribution, with HTTP Range requests.
+- `/ether` — WebSocket upgrade to the virtual Ethernet gateway.
 
-         exec /bin/aux/etherws -r -A https://auth.plan2001.com -E https://plan2001.com
+`/plan9-wasm32/` responses carry `Cross-Origin-Opener-Policy: same-origin`
+and `Cross-Origin-Embedder-Policy: require-corp` (the machine's memory is
+a SharedArrayBuffer).  The ISO is never gzipped: the firmware needs its
+true length and 206 responses.
 
-     with `remote` in its environment the browser's address, if the
-     handler knows it (else etherws reads `$net/remote`, or logs `-`).
-   - Everything else on `plan2001.com` as now (the front page,
-     `/plan9-wasm32/`, `/iso/`).
-4. **cpustart**:
+## The virtual Ethernet
 
-        mkdir -p /adm/ether/cred; chmod 700 /adm/ether
-        touch /sys/log/ether; chmod 666 /sys/log/ether
-        aux/ethernetd -r auth.plan2001.com -o https://auth.plan2001.com &
+`tools/gateway` (installed at `/opt/plan9-wasm32/gateway`) is a switch and
+DHCP server.  It listens on `127.0.0.1:17080`; nginx proxies `/ether` to
+it.  It opens `tap0`; `gateway-net-up` configures the host:
 
-   as the host owner, after the network is up (it reads the default
-   route). It makes its pkt interface (100.64.0.1/24), turns on IP
-   forwarding (9front's is the stack's, all interfaces), and adds a
-   default route with translation (the default one's gateway and
-   interface; the stack translates only what it forwards). Not a
-   source-specific one: WireGuard's outer packets are routed without a
-   source, take such a route's source range, and one for 100.64.0.0/24
-   cut the tunnel (docs/network.md). Little else is forwarded: the
-   cloud's security list lets only 443, 53 and 51820 in (a WireGuard peer
-   could route through it), and the server's own services (`localonly`:
-   10.*, 192.168.*) never see 100.64.0.0/24, which ethernetd does not let
-   reach the server.
-5. **Headers** (Codex's review, F): HSTS
-   (`Strict-Transport-Security: max-age=31536000`) and
-   `X-Content-Type-Options: nosniff` on every answer; on the auth site a
-   strict CSP (`default-src 'self'; script-src 'self' 'unsafe-inline';
-   connect-src 'self' wss://auth.plan2001.com; frame-ancestors 'none'`);
-   on the machine's, CSP that lets it run (`script-src 'self' blob:
-   'wasm-unsafe-eval' 'unsafe-inline'; connect-src 'self'
-   wss://plan2001.com; worker-src 'self' blob:`). A limit on Range
-   requests' rate (the ISO) is worth having.
+- `tap0` 10.0.2.2/24, `ip_forward=1`;
+- `tools/gateway -t tap0 -d`: each machine gets 10.0.2.15 and up by its
+  MAC, router 10.0.2.2, and DNS 1.1.1.1 and 8.8.8.8 (DHCP option 6);
+- iptables NAT: `10.0.2.0/24` masqueraded out the default interface, with
+  FORWARD ACCEPTs inserted before any catch-all REJECT (Oracle's image has
+  one).
 
-## Removed
+There is **no passkey and no netauth=**: the machine's firmware connects
+the card to `wss://plan2001.com/ether` at boot, and the gateway accepts it.
+All running machines share the host's uplink through NAT.
 
-- webterm's WebSockets (rcpu, `/resume`, 567, 5356, 17019, 17030, 17040,
-  17041), the app origins (`/lib/app`, `APP.cpu.plan2001.com` in the zone,
-  `/app`), crsrv and the compute pool, Monolith;
-- `plan2001.html` (Plan2001's machine: it shares plan2001.com's origin,
-  and so its OPFS disk `sdW0`, with plan9-wasm32's machine);
-- signupd, passkeyd, secstored, weblimitd, websession's accounts; the web
-  accounts' data (keyfs, secstore, `/adm/webauthn`) only once the owner
-  has said so.
+`tools/gateway` is the same switch used locally by `tools/serve`; the
+server adds the TAP, NAT and systemd (`tools/site/ubuntu/`).
 
-## Kept
+## Deploying
 
-- tlssrv and rc-httpd (the pages);
-- acmed, certrenew and ndb/dns's zone `cpu.plan2001.com` (the challenges);
-- WireGuard, `localonly`, and auth on 567 for the local network and the
-  tunnel (the administrator's 9pterm);
-- `/iso/` and `/plan9-wasm32/` (plan9-wasm32's deploy writes them).
+From this repository, with the host in `~/.ssh/config` and passwordless
+sudo there:
 
-## plan9-wasm32's deploy
+    tools/site/ubuntu/deploy plan2001.com
 
-`tools/site/deploy` (over the tunnel, as now) also builds `aux/ethernetd`
-and `aux/etherws` for amd64 on the server (`sys/src/cmd/ethergw`) and
-installs them in `/amd64/bin/aux`, puts the auth page in
-`/sys/lib/plan2001/auth/index.html`, and writes `netauth=` into
-`/plan9-wasm32/plan9.ini`. It does not touch Plan2001's files above.
+It stages `build/site-ubuntu` from `build/dist` (the ISO) and the sources
+(launcher, firmware), uploads it, installs nginx and the
+`plan9-gateway.service` unit, and reloads both.  `build/live` must exist
+(`tools/build`) for the kernel and boot file system, and
+`build/dist/plan9-wasm32.iso` (`tools/dist`) for the ISO.
+
+Plan9-wasm32 itself remains a browser guest OS.  Local builds,
+`tools/serve` and `tools/gateway` are development tools; the web server
+does not run the guest operating system.

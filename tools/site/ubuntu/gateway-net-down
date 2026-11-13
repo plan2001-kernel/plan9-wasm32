@@ -1,0 +1,10 @@
+#!/bin/sh
+# Undo gateway-net-up.  Best effort: the service is restarting or stopping.
+uplink=${UPLINK:-$(ip route show default | awk '{print $5; exit}')}
+[ -n "$uplink" ] && {
+	while iptables -D FORWARD -i "$uplink" -o tap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
+	while iptables -D FORWARD -i tap0 -o "$uplink" -j ACCEPT 2>/dev/null; do :; done
+	while iptables -t nat -D POSTROUTING -s 10.0.2.0/24 -o "$uplink" -j MASQUERADE 2>/dev/null; do :; done
+}
+ip link del tap0 2>/dev/null || true
+exit 0

@@ -1,0 +1,17 @@
+[Unit]
+Description=plan9-wasm32 virtual Ethernet gateway
+Documentation=https://plan2001.com/plan9-wasm32/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+Environment="GATEWAY_DNS=1.1.1.1 8.8.8.8"
+ExecStartPre=/opt/plan9-wasm32/gateway-net-up
+ExecStart=/usr/bin/python3 /opt/plan9-wasm32/gateway -p 17080 -o https://plan2001.com -t tap0 -d
+ExecStopPost=/opt/plan9-wasm32/gateway-net-down
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
