@@ -31,6 +31,7 @@ sed "s|@VERSION@|$v|" "$root/sys/src/9/wasm32/kernel.html" >"$site/plan9-wasm32/
 cp "$root/sys/src/9/wasm32/platform.js" "$live/9wasm32.wasm" "$live/9wasm32.fs" "$site/plan9-wasm32/boot/"
 printf 'cdboot=yes\niso=/iso/plan9-wasm32.iso\n' >"$site/plan9-wasm32/boot/plan9.ini"
 ln "$iso" "$site/iso/plan9-wasm32.iso"
+(cd "$tree" && sha256sum plan9-wasm32.iso) >"$site/iso/plan9-wasm32.iso.sha256"
 for f in "$site"/plan9-wasm32/boot/* "$site"/plan9-wasm32/index.html "$site"/index.html; do
 	[ "${f%.gz}" = "$f" ] && gzip -9 -n -k "$f"
 done
