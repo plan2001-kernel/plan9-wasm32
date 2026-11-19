@@ -8,11 +8,14 @@
 <style>
 	:root { --bg: #fff; --fg: #000; }
 	@media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #ddd; } }
-	html, body { margin: 0; height: 100%; overflow: hidden; background: #777; }
+	html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 	body { color: var(--fg); font: 14px monospace; }
 	/* the machine's screen is the window (rio in all of it); ?console=1 the serial port below it */
-	canvas { display: block; width: 100vw; height: calc(100vh - var(--barh, 0px)); background: #777; touch-action: none; outline: none; }
+	canvas { display: block; width: 100vw; height: calc(100vh - var(--barh, 0px)); background: #000; touch-action: none; outline: none; }
 	pre { display: none; margin: 0; padding: 16px; white-space: pre-wrap; word-break: break-all; background: var(--bg); }
+	/* before rio's first frame: the console, as 9front's boot shows it, in the window */
+	body.booting canvas { display: none; }
+	body.booting pre#eia0 { display: block; position: fixed; inset: 0; margin: 0; padding: 16px; overflow: auto; background: #000; color: #ddd; font: 14px/1.35 monospace; }
 	body.console { overflow: auto; }
 	body.console canvas { width: auto; height: auto; max-width: 100%; margin: 0 auto; }
 	body.console pre { display: block; }
@@ -29,7 +32,7 @@
 	#halt { display: none; position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 16px; background: var(--bg); }
 </style>
 </head>
-<body>
+<body class="booting">
 <!-- Plan9-wasm32's machine (sys/src/9/wasm32): its screen the window (?screen=WxH another size), its serial port with ?console=1 -->
 <canvas id="screen" width="800" height="600"></canvas>
 <pre id="eia0"></pre>
@@ -248,6 +251,7 @@ boot(fromdisk ? fromdisk.kernel : '9wasm32.wasm', {
 	/* the disk's plan9.ini; a page's own init (?arg=) wins over its init= */
 	config: machine + (fromdisk ? iniconf(fromdisk.conf).replace(q.getAll('arg').length ? /^init=.*\n/mg : /$^/, '') : iso ? 'cdboot=yes\n' : '') + q.getAll('conf').map((c) => c + '\n').join(''),
 	canvas: document.getElementById('screen'),
+	drawn: () => document.body.classList.remove('booting'),
 	touchbutton: () => touchbutton,
 	screen: (([w, h]) => ({ w: Number(w) || ((q.get('console') === '1') ? 800 : innerWidth), h: Number(h) || ((q.get('console') === '1') ? 600 : innerHeight - barh) }))((q.get('screen') ?? '').split('x')),
 	/*
