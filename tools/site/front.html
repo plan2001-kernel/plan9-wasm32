@@ -5,57 +5,338 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Plan2001.com — Plan 9 -kokeiluja ja Plan9-wasm32 selaimessa.">
   <title>Plan2001 — palvelut</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&amp;family=Source+Sans+3:wght@400;500;600&amp;display=swap" rel="stylesheet">
   <style>
-    :root { color-scheme: dark; --bg:#0b1117; --panel:#111b24; --line:#263744; --text:#e9f0f4; --muted:#a6b6c2; --accent:#70e0bd; --blue:#9bc9ff; }
-    * { box-sizing:border-box }
-    body { margin:0; background:radial-gradient(ellipse at 80% 0,#163331 0,transparent 38%),var(--bg); color:var(--text); font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif }
-    main { width:min(1040px,calc(100% - 36px)); margin:0 auto; padding:72px 0 48px }
-    .eyebrow { color:var(--accent); font-size:.8rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase }
-    h1 { font-size:clamp(2.8rem,8vw,5.7rem); line-height:1; letter-spacing:-.065em; margin:.35em 0 .22em }
-    h2 { font-size:1.35rem; margin:0 0 .45rem }
-    p { margin:.5rem 0; color:var(--muted) }
-    .intro { max-width:680px; font-size:1.15rem }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin:42px 0 }
-    article { background:linear-gradient(145deg,#14212b,var(--panel)); border:1px solid var(--line); border-radius:18px; padding:24px; min-height:215px }
-    .tag { display:inline-block; border:1px solid #385449; border-radius:99px; color:var(--accent); font-size:.75rem; padding:2px 10px; margin-bottom:15px }
-    code,.url { color:var(--blue); font: .9rem ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere }
-    a { color:var(--accent); text-underline-offset:4px }
-    .link { display:inline-block; margin-top:14px; font-weight:650 }
-    .note { border-left:2px solid var(--accent); padding:4px 0 4px 16px; max-width:760px }
-    footer { border-top:1px solid var(--line); padding-top:18px; color:var(--muted); font-size:.9rem }
-    @media(max-width:600px) { main { padding-top:46px } article { min-height:0 } }
+    :root {
+      color-scheme: light;
+      --paper: #fffdf5;
+      --paper-deep: #faf5ea;
+      --ink: #171311;
+      --muted: #5b564d;
+      --faint: #8a8276;
+      --rule: #ded5c4;
+      --tan: #d0b698;
+      --cyan: #76e1fe;
+      --cyan-deep: #1f6f82;
+      --slate: #384e54;
+      --red: #9e3327;
+      --serif: "EB Garamond", "ET Book", "Bembo", "Bembo MT", "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", P052, Georgia, serif;
+      --sans: "Source Sans 3", "Gill Sans", "Gill Sans MT", "Gill Sans Nova", "Lato", "Helvetica Neue", Arial, sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html { background: #ece5d8; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 19px/1.55 var(--serif);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    .sheet {
+      width: min(1060px, 100%);
+      margin: 0 auto;
+      padding: clamp(28px, 5vw, 64px) clamp(20px, 6vw, 76px) 48px;
+      background: var(--paper);
+    }
+    .masthead {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      padding-bottom: .65rem;
+      border-bottom: 1px solid var(--ink);
+    }
+    .wordmark {
+      font-family: var(--sans);
+      font-size: .78rem;
+      font-weight: 600;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .masthead nav {
+      font-family: var(--sans);
+      font-size: .68rem;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .kicker {
+      margin: clamp(2.4rem, 6vw, 4.2rem) 0 .8rem;
+      font-family: var(--sans);
+      font-size: .7rem;
+      font-weight: 600;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--red);
+    }
+    h1 {
+      margin: 0 0 .3rem;
+      font-weight: 400;
+      font-size: clamp(3.2rem, 10vw, 6.8rem);
+      line-height: .92;
+      letter-spacing: -.025em;
+    }
+    .lede {
+      margin: 0 0 clamp(2rem, 5vw, 3.2rem);
+      max-width: 33em;
+      font-size: clamp(1.15rem, 2.4vw, 1.45rem);
+      line-height: 1.45;
+      color: var(--muted);
+    }
+    .columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 15.5rem;
+      gap: clamp(2rem, 5vw, 4.5rem);
+      align-items: start;
+    }
+    .body { min-width: 0; }
+    .services {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0;
+      font-size: .95rem;
+    }
+    .services caption {
+      padding: 0 0 .55rem;
+      text-align: left;
+      font-family: var(--sans);
+      font-size: .66rem;
+      font-weight: 600;
+      letter-spacing: .17em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .services th, .services td {
+      padding: .72rem .85rem .72rem 0;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--rule);
+      font-weight: 400;
+    }
+    .services thead th {
+      padding-top: 0;
+      border-bottom: 1px solid var(--ink);
+      font-family: var(--sans);
+      font-size: .66rem;
+      font-weight: 600;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+    .services tbody tr:last-child th,
+    .services tbody tr:last-child td { border-bottom: 1px solid var(--ink); }
+    .services tbody tr:hover { background: rgba(208, 182, 152, .13); }
+    .services tbody th { font-size: 1.08rem; line-height: 1.3; }
+    .services .desc {
+      display: block;
+      margin-top: .25rem;
+      font-size: .84rem;
+      line-height: 1.42;
+      color: var(--muted);
+    }
+    .services td {
+      font-size: .82rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .services td:nth-child(2) { white-space: nowrap; }
+    .url {
+      font-family: var(--mono);
+      font-size: .78rem;
+      color: var(--cyan-deep);
+      white-space: nowrap;
+    }
+    a {
+      color: var(--cyan-deep);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(31, 111, 130, .35);
+      transition: border-color .15s ease, color .15s ease;
+    }
+    a:hover { color: var(--slate); border-bottom-color: var(--cyan); }
+    .margin {
+      border-top: 2px solid var(--tan);
+      padding-top: .8rem;
+      font-size: .78rem;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .margin p { margin: 0 0 1.15rem; }
+    .margin .label {
+      display: block;
+      margin-bottom: .15rem;
+      font-family: var(--sans);
+      font-size: .62rem;
+      font-weight: 600;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--cyan-deep);
+    }
+    .margin .credit {
+      padding-top: .8rem;
+      border-top: 1px solid var(--rule);
+      color: var(--faint);
+      font-size: .72rem;
+    }
+    .plate {
+      margin: clamp(2.8rem, 6vw, 4.5rem) 0 0;
+      padding: 1.1rem 0 1rem;
+      background: var(--paper-deep);
+      border-top: 1px solid var(--tan);
+      border-bottom: 1px solid var(--tan);
+    }
+    .plate svg { display: block; width: 100%; height: auto; }
+    figcaption {
+      margin: 1rem auto 0;
+      max-width: 52rem;
+      padding: 0 clamp(1rem, 4vw, 2rem);
+      font-size: .78rem;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    figcaption b { color: var(--ink); font-weight: 600; }
+    figcaption i { font-style: italic; }
+    .colophon {
+      display: flex;
+      justify-content: space-between;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      margin-top: clamp(2.5rem, 6vw, 4rem);
+      padding-top: .9rem;
+      border-top: 1px solid var(--ink);
+      font-size: .72rem;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .colophon .right { text-align: right; }
+    @media (max-width: 820px) {
+      .columns { grid-template-columns: 1fr; gap: 2.2rem; }
+      .margin { border-top: 1px solid var(--rule); }
+      .services td { white-space: normal; }
+      .url { white-space: normal; overflow-wrap: anywhere; }
+    }
+    @media (max-width: 520px) {
+      body { font-size: 17px; }
+      h1 { letter-spacing: -.015em; }
+      .services { font-size: .9rem; }
+    }
   </style>
 </head>
 <body>
-<main>
-  <header>
-    <div class="eyebrow">Plan2001.com · Ubuntu Linux</div>
-    <h1>Palvelut</h1>
-    <p class="intro">Plan2001-palvelimen julkiset rajapinnat ja ohjeet niiden käyttöönottoon.</p>
+<div class="sheet">
+  <header class="masthead">
+    <a class="wordmark" href="/">Plan2001</a>
+    <nav aria-label="Päävalikko">Plan 9 · palvelut</nav>
   </header>
 
-  <section class="grid" aria-label="Verkkosivusto">
-    <article>
-      <span class="tag">HTTPS · verkkosivusto</span>
-      <h2>Plan9-wasm32 selaimessa</h2>
-      <p>Plan 9 for wasm32: 9front-pohjainen käyttöjärjestelmä, joka käynnistyy selaimessa.
-         Lataa ISO, käynnistä kone, muuta BIOS-asetuksia ja asenna järjestelmä.</p>
-      <p class="url">https://plan2001.com/plan9-wasm32/</p>
-      <a class="link" href="/plan9-wasm32/">Avaa Plan9-wasm32 &rarr;</a>
-    </article>
-    <article>
-      <span class="tag">ISO · käynnistys · BIOS · Help</span>
-      <h2>Kone ja asennus</h2>
-      <p>Virtuaalinen Ethernet ja Internet toimivat oletusarvoisesti. ISO on ladattavissa
-         palvelimelta, ja asennus tapahtuu selaimen omalle levylle.</p>
-      <a class="link" href="/plan9-wasm32/#help">Asennusohje &rarr;</a>
-    </article>
-  </section>
+  <main>
+    <p class="kicker">Plan2001.com · Plan 9</p>
+    <h1>Palvelut</h1>
+    <p class="lede">Plan2001-palvelimen julkiset rajapinnat ja ohjeet niiden käyttöönottoon.</p>
 
-  <p class="note">Palvelin reitittää kaikkien selaimessa käynnistettyjen koneiden IP-liikenteen.
-     Erillistä passkey-tunnistautumista ei ole.</p>
+    <div class="columns">
+      <div class="body">
+        <table class="services">
+          <caption>Julkiset palvelut</caption>
+          <thead>
+            <tr>
+              <th scope="col">Palvelu</th>
+              <th scope="col">Osoite</th>
+              <th scope="col">Huom</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">
+                <a href="/plan9-wasm32/">Plan9-wasm32 selaimessa</a>
+                <span class="desc">9front-pohjainen käyttöjärjestelmä, joka käynnistyy selaimessa.</span>
+              </th>
+              <td><span class="url">/plan9-wasm32/</span></td>
+              <td>ISO · BIOS · asennus</td>
+            </tr>
+            <tr>
+              <th scope="row">
+                <a href="/plan9-wasm32/#help">Kone ja asennus</a>
+                <span class="desc">Virtuaalinen Ethernet ja Internet; asennus selaimen omalle levylle.</span>
+              </th>
+              <td><span class="url">/plan9-wasm32/#help</span></td>
+              <td>Asennusohje</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-  <footer>Plan2001.com · Ubuntu Linux</footer>
-</main>
+      <aside class="margin" aria-label="Marginaalimerkinnät">
+        <p><span class="label">Palvelin</span>Palvelin reitittää kaikkien selaimessa käynnistettyjen koneiden IP-liikenteen.</p>
+        <p><span class="label">Tunnistautuminen</span>Erillistä passkey-tunnistautumista ei ole.</p>
+        <p class="credit">Värimaailma Renée Frenchin. Taitto Edward Tufteen hengessä.</p>
+      </aside>
+    </div>
+
+    <figure class="plate">
+      <svg viewBox="0 0 900 300" role="img" aria-labelledby="minard-title minard-desc">
+        <title id="minard-title">Mukaileva piirros Minardin Napoleon-kuvaajasta</title>
+        <desc id="minard-desc">Punainen nauha kuvaa Napoleonin armeijan hyökkäystä Moskovaan ja musta nauha paluuta. Nauhojen leveys kuvaa armeijan kokoa; alareunassa on lämpötilakäyrä.</desc>
+
+        <g fill="none" stroke="var(--cyan)" stroke-width="1.1" opacity=".55">
+          <path d="M40 150 C 170 126 290 170 420 148 S 690 120 860 150"/>
+          <path d="M585 84 C 568 126 556 178 544 232"/>
+          <path d="M760 86 C 742 128 730 180 718 232"/>
+        </g>
+        <line x1="40" y1="150" x2="860" y2="150" stroke="var(--tan)" stroke-width="1" stroke-dasharray="2 5"/>
+
+        <path d="M70 100 L760 130 L820 131 L820 137 L760 138 L70 160 Z" fill="var(--red)"/>
+        <path d="M820 160 L780 161 L600 168 L430 176 L70 190 L70 193 L430 180 L600 172 L780 165 L820 168 Z" fill="var(--ink)"/>
+
+        <g font-family="EB Garamond, Palatino, Georgia, serif" fill="var(--ink)">
+          <text x="70" y="90" font-size="14">Kowno</text>
+          <text x="380" y="112" font-size="14">Smolensk</text>
+          <text x="820" y="112" font-size="14" text-anchor="end">Moskova</text>
+          <text x="500" y="194" font-size="14">Beresina</text>
+
+          <text x="130" y="138" font-size="15" fill="var(--paper)">422 000</text>
+          <text x="820" y="126" font-size="12" text-anchor="end" fill="var(--muted)">100 000</text>
+          <text x="70" y="204" font-size="12" fill="var(--muted)">10 000</text>
+        </g>
+
+        <g font-family="Source Sans 3, Gill Sans, sans-serif" fill="var(--slate)">
+          <text x="40" y="234" font-size="9" font-weight="600" letter-spacing="1.6">LÄMPÖTILA</text>
+          <path d="M70 240 L820 262" fill="none" stroke="var(--slate)" stroke-width="1.2"/>
+          <g stroke="var(--slate)" stroke-width="1">
+            <line x1="90" y1="241" x2="90" y2="247"/>
+            <line x1="260" y1="246" x2="260" y2="252"/>
+            <line x1="440" y1="251" x2="440" y2="257"/>
+            <line x1="620" y1="256" x2="620" y2="262"/>
+          </g>
+          <g font-size="10" text-anchor="middle">
+            <text x="90" y="236">0°</text>
+            <text x="260" y="241">−9°</text>
+            <text x="440" y="246">−20°</text>
+            <text x="620" y="251">−30°</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>
+        <b>Charles Joseph Minardin <i>Carte figurative</i> (1869).</b>
+        Kuvaaja Napoleonin Venäjän-retkestä on yksi kaikkien aikojen tunnetuimmista
+        tilastograafeista; Edward Tufte piti sitä yhtenä parhaista koskaan piirretyistä.
+        Sivun taitto ja typografia lainaavat Tufteen kirjojen tyyliä, värimaailma
+        — lämmin paperi, tanninruskea ja syaani — on Renée Frenchin. Piirros on
+        mukaileva, ei historiallinen kopio.
+      </figcaption>
+    </figure>
+  </main>
+
+  <footer class="colophon">
+    <div>Plan2001.com · Plan 9. Plan 9 on Plan 9 Foundationin tavaramerkki; tämä projekti ei ole sidoksissa siihen.</div>
+    <div class="right">Taitto Edward Tufteen · värit Renée Frenchin</div>
+  </footer>
+</div>
 </body>
 </html>
