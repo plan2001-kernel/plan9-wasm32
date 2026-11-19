@@ -122,7 +122,7 @@ mkdir -p "$g/fs" "$g/refs/heads" "$g/refs/remotes/origin"
 echo "$c" >"$g/refs/remotes/origin/tree"
 echo "$c" >"$g/refs/heads/tree"
 echo 'ref: refs/heads/tree' >"$g/HEAD"
-printf '[remote "origin"]\n\turl=https://github.com/pereuna/plan9-wasm32\n' >"$g/config"
+printf '[remote "origin"]\n\turl=https://github.com/plan2001-kernel/plan9-wasm32\n' >"$g/config"
 git -C "$root" ls-tree -r --name-only tree | sed 's/^/T NOQID 0 /' >"$g/INDEX9"
 removed=$(git -C "$root" diff --name-only --diff-filter=D refs/9front/front tree | wc -l)
 # the proto: every file and directory, owned by sys as 9front's distproto has them (mkfs -U, the
