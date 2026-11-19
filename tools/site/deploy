@@ -30,8 +30,9 @@ s=$root/build/site
 if [ -n "$site" ]; then
 	mkdir -p "$s/source-pipeline"
 	size=$(( $(stat -c %s "$d/plan9-wasm32.iso") / 1048576 ))
+	hash=$(sha256sum "$d/plan9-wasm32.iso" | cut -c1-12)
 	v="tree $(git -C "$root" rev-parse --short tree) · $(date -u +%Y-%m-%d)"
-	sed "s|@ISO@|plan9-wasm32.iso, $size MB|; s|@VERSION@|$v|" "$here/index.html" >"$s/index.html"
+	sed "s|@ISO@|plan9-wasm32.iso, $size MB|; s|@ISOVERSION@|$hash|; s|@VERSION@|$v|" "$here/index.html" >"$s/index.html"
 	cp "$here/source-pipeline.html" "$s/source-pipeline/index.html"
 fi
 run() {	# a script there, as admin; its last line says it is done

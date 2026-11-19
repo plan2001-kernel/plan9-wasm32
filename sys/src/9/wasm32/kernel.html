@@ -225,6 +225,25 @@ const isofile = iso === 'file' ? await new Promise((done) => {
 	d.classList.add('on');
 	f.addEventListener('change', () => { if (f.files.length) { d.classList.remove('on'); done(f.files[0]); } });
 }) : null;
+// A fresh disk must fit the WPE origin quota. Reuse the capacity of an existing disk.
+const diskname = 'sdW0', mib = 1048576;
+const olddisk = await (async () => {
+	if (q.get('disk') === '0') return 0;
+	try {
+		const dir = await navigator.storage.getDirectory();
+		return (await (await dir.getFileHandle(diskname)).getFile()).size;
+	} catch {
+		return 0;
+	}
+})();
+const disksize = q.has('disk') ? Number(q.get('disk')) * mib : olddisk || 1792 * mib;
+const needdisk = !!isofile && disksize !== 0;
+function booterror(error) {
+	pre.textContent += '\n' + error.message + '\n';
+	const h = document.getElementById('halt');
+	h.textContent = error.message;
+	h.style.display = 'block';
+}
 boot(fromdisk ? fromdisk.kernel : '9wasm32.wasm', {
 	eia: (b) => { pre.textContent += dec.decode(b, { stream: true }); },
 	halt: (why) => {
@@ -246,8 +265,9 @@ boot(fromdisk ? fromdisk.kernel : '9wasm32.wasm', {
 	fs: args.length ? (fromdisk ? fromdisk.fs : await rootfs()) : undefined,
 	dist: isofile ? { file: isofile } : iso ? { url: new URL(iso, location.href).href } : null,
 	args,
-	/* the machine's disk (#S/sdW0): OPFS, ?disk=MB (4096: room for an installed system and its esp), ?disk=0 none */
-	disk: (q.get('disk') ?? '4096') !== '0' && navigator.storage?.getDirectory ? { name: 'sdW0', size: Number(q.get('disk') ?? 4096) * 1048576, fail: q.get('diskfail') } : null,
+	/* The writable OPFS disk (#S/sdW0), or no disk with ?disk=0. */
+	disk: disksize > 0 && navigator.storage?.getDirectory ? { name: diskname, size: disksize, fail: q.get('diskfail') } : null,
+	needdisk,
 	/* the disk's plan9.ini; a page's own init (?arg=) wins over its init= */
 	config: machine + (fromdisk ? iniconf(fromdisk.conf).replace(q.getAll('arg').length ? /^init=.*\n/mg : /$^/, '') : iso ? 'cdboot=yes\n' : '') + q.getAll('conf').map((c) => c + '\n').join(''),
 	canvas: document.getElementById('screen'),
@@ -270,7 +290,7 @@ boot(fromdisk ? fromdisk.kernel : '9wasm32.wasm', {
 	failrfmem: Number(q.get('failrfmem')) || 0,
 	bad: q.get('bad'),	/* a test's: a BootInfo the kernel must refuse (arch, rd, fb; platform.js) */
 	oldheader: q.has('oldheader'),	/* a test's: an older v1 loader's shorter header */
-});
+}).catch(booterror);
 </script>
 </body>
 </html>

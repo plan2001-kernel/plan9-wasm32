@@ -16,51 +16,84 @@
 # names and modes, Joliet): build/dist/plan9-wasm32.iso, to put on the
 # site's /iso; and the live image that boots it, build/dist/live.
 #   PLAN9=... tools/dist
-set -e
+#   DIST_PREBUILT: exported wasm32/ and acme/bin/wasm32/ from a completed install
+#   DIST_REVISION: source revision used to build the export
+#   DIST_OUT: output directory (default build/dist)
+set -eo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(dirname "$here")
 [ -x "${PLAN9:-}/bin/mk" ] || { echo "dist: PLAN9 must name a plan9port with mk and rc" >&2; exit 2; }
-d=$root/build/dist
-tree=$d/tree
+d=${DIST_OUT:-$root/build/dist}
+prebuilt=${DIST_PREBUILT:-}
+revision=${DIST_REVISION:-refs/heads/tree}
+v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
 mkdir -p "$d"
-"$here/tree" "$tree" >/dev/null
-libs=$(cd "$tree/sys/src" && ls -d lib* | grep -v '^libc$')
-# what the boot file system has first (native's own list: a failure is the build's), then all of it,
-# on past what fails (9front's mkfiles loop over a directory's directories with rc -e: the
-# first failure ends the loop)
-TREE=$tree "$here/native" >"$d/build.log" 2>&1 || { tail -20 "$d/build.log"; echo "dist: the boot file system's programs failed (build/dist/build.log)" >&2; exit 1; }
-TREE=$tree MKFLAGS=-k "$here/native" libc $libs ape cmd games 9/wasm32 >>"$d/build.log" 2>&1 || true
-# aux's and ip's own programs (aux/listen, aux/timesync ...): their install waits for their
-# directories' (installdirs), whose rc loop ends at the first that fails; each, as mkmany installs it
-for dd in cmd/aux cmd/ip; do
-	t=$(python3 - "$tree/sys/src/$dd/mkfile" <<'PY'
+d=$(cd "$d" && pwd)
+tree=$d/tree
+if [ -n "$prebuilt" ]; then
+	tree=$(cd "$prebuilt" && pwd)
+	base=$(git -C "$root" rev-parse "$revision^{commit}")
+	for f in wasm32/bin/3c wasm32/bin/3l wasm32/bin/disk/mkfs wasm32/bin/games/sokoban wasm32/lib/libc.a acme/bin/wasm32/Mail wasm32/9fat/9wasm32.fs; do
+		[ -s "$tree/$f" ] || { echo "dist: missing prebuilt $f" >&2; exit 1; }
+	done
+	# Include the release fixes in the ISO's Git tree as well as its work tree.
+	index=$(mktemp -d)
+	trap 'rm -rf "$index"' EXIT
+	(
+		export GIT_INDEX_FILE=$index/index
+		cd "$root"
+		git read-tree "$base"
+		for f in rc/bin/inst/copydist rc/bin/inst/mountdist sys/src/cmd/mkfile sys/src/cmd/size.c sys/src/9/wasm32/kernel.html sys/src/9/wasm32/platform.js; do
+			mode=100644
+			[[ $f != rc/bin/inst/* ]] || mode=100755
+			git update-index --add --cacheinfo "$mode,$(git hash-object -w "$f"),$f"
+		done
+		git write-tree
+	) >"$index/tree"
+	revision=$(git -C "$root" -c user.name=Plan9-wasm32 -c user.email=release@plan2001.com \
+		commit-tree "$(cat "$index/tree")" -p "$base" -m 'Prepare binary installation release')
+	: >"$d/failed"
+else
+	"$here/tree" "$tree" >/dev/null
+	libs=$(cd "$tree/sys/src" && ls -d lib* | grep -v '^libc$')
+	# what the boot file system has first (native's own list: a failure is the build's), then all of it,
+	# on past what fails (9front's mkfiles loop over a directory's directories with rc -e: the
+	# first failure ends the loop)
+	TREE=$tree "$here/native" >"$d/build.log" 2>&1 || { tail -20 "$d/build.log"; echo "dist: the boot file system's programs failed (build/dist/build.log)" >&2; exit 1; }
+	TREE=$tree MKFLAGS=-k "$here/native" libc $libs ape cmd games 9/wasm32 >>"$d/build.log" 2>&1 || true
+	# aux's and ip's own programs (aux/listen, aux/timesync ...): their install waits for their
+	# directories' (installdirs), whose rc loop ends at the first that fails; each, as mkmany installs it
+	for dd in cmd/aux cmd/ip; do
+		t=$(python3 - "$tree/sys/src/$dd/mkfile" <<'PY'
 import re, sys
 m = re.search(r'^TARG\s*=((?:.*\\\n)*.*)$', open(sys.argv[1]).read(), re.M)
 print(','.join(n + '.install' for n in m.group(1).replace('\\', ' ').split()))
 PY
-)
-	TREE=$tree MKFLAGS=-k "$here/native" "$dd:$t" >>"$d/build.log" 2>&1 || true
-done
-grep '^mk: ' "$d/build.log" >"$d/failed" || true
+	)
+		TREE=$tree MKFLAGS=-k "$here/native" "$dd:$t" >>"$d/build.log" 2>&1 || true
+	done
+	grep '^mk: ' "$d/build.log" >"$d/failed" || true
+fi
 # the boot materials
 w=$tree/sys/src/9/wasm32
 [ -e "$tree/wasm32/9wasm32.wasm" ] || { echo "dist: no kernel (build/dist/build.log)" >&2; exit 1; }
 # /$cputype/9fat: what goes onto the boot FAT with the kernel and plan9.ini (inst/bootsetup)
 fat=$tree/wasm32/9fat
-mkdir -p "$fat"
-"$here/bootfs" "$tree" "$fat/9wasm32.fs" "$w/bootfs.proto" >/dev/null
-v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
-sed "s|@VERSION@|$v|" "$w/kernel.html" >"$fat/index.html"
-cp "$w/platform.js" "$fat/platform.js"
+if [ -z "$prebuilt" ]; then
+	mkdir -p "$fat"
+	"$here/bootfs" "$tree" "$fat/9wasm32.fs" "$w/bootfs.proto" >/dev/null
+	sed "s|@VERSION@|$v|" "$w/kernel.html" >"$fat/index.html"
+	cp "$w/platform.js" "$fat/platform.js"
+fi
 
 # the image's root: the tree branch's files (tools/treebranch: the source, as 9front's git has
 # it), the release's directories git does not keep (cfg, cron, mail, usr, tmp), the programs
 # tools/dist.base names, the libraries and the boot materials built here, and /dist/9front/.git -
 # the branch, whose work tree the root is (bind -ac /dist/9front /, as 9front's
 # sysupdate)
-"$here/treebranch" >/dev/null
+[ -n "$prebuilt" ] || "$here/treebranch" >/dev/null
 out=$d/root
 rm -rf "$out"; mkdir -p "$out"
-git -C "$root" archive tree | tar -x -C "$out"
+git -C "$root" archive "$revision" | tar -x -C "$out"
 # what 9front's ISO has that its git does not: the release's own files (lib/ndb, adm/timezone/local,
 # cfg, mail, sys/log, the manuals' indexes ...) - not the other machines' programs, libraries and
 # boot files, the source's made files, or its git
@@ -89,6 +122,10 @@ mkdir -p "$out/tmp" "$out/dist/9front" "$out/usr/glenda/bin/wasm32" "$out/wasm32
 # and acme's: where the machine's mk install puts what it builds
 (cd "$rel/amd64" && find bin lib -mindepth 1 -type d) | while read -r b; do mkdir -p "$out/wasm32/$b"; done
 mkdir -p "$out/acme/bin/wasm32"
+if [ -n "$prebuilt" ]; then
+	cp -a "$tree/wasm32/bin/." "$out/wasm32/bin/"
+	cp -a "$tree/acme/bin/wasm32/." "$out/acme/bin/wasm32/"
+else
 python3 -I - "$here/dist.base" "$tree/wasm32/bin" "$out/wasm32/bin" <<'PY'
 import os, shutil, sys
 lst, src, dst = sys.argv[1:]
@@ -106,15 +143,23 @@ for l in open(lst):
 if missing:
 	sys.exit('dist: not built (build/dist/build.log): ' + ' '.join(missing))
 PY
+fi
 cp -a "$tree/wasm32/lib" "$out/wasm32/"
 cp "$tree/wasm32/init" "$tree/wasm32/9wasm32.wasm" "$out/wasm32/"
 cp -a "$fat" "$out/wasm32/"
+if [ -n "$prebuilt" ]; then
+	sed "s|@VERSION@|$v|" "$root/sys/src/9/wasm32/kernel.html" >"$out/wasm32/9fat/index.html"
+	cp "$root/sys/src/9/wasm32/platform.js" "$out/wasm32/9fat/"
+	fat=$out/wasm32/9fat
+	(cd "$out" && find wasm32/bin wasm32/lib acme/bin/wasm32 -type f -print0 | sort -z | xargs -0 sha256sum) >"$out/dist/wasm32.sha256"
+	printf 'Build source: %s\nRelease source: %s\nGhostscript is excluded.\n' "$base" "$revision" >"$out/dist/wasm32-release"
+fi
 # /dist/9front/.git, as 9front's git keeps a clone: the branch's objects in one pack, its refs
 # loose, HEAD on it, origin this repository, and INDEX9 - every file of it tracked, its qid not
 # yet known (git/walk looks at the file)
 g=$out/dist/9front/.git
 git init -q --template= "$out/dist/9front"
-git -C "$out/dist/9front" fetch -q --no-tags "$root" +refs/heads/tree:refs/remotes/origin/tree
+git -C "$out/dist/9front" fetch -q --no-tags "$root" +"$revision":refs/remotes/origin/tree
 git -C "$out/dist/9front" repack -q -a -d
 c=$(git -C "$out/dist/9front" rev-parse refs/remotes/origin/tree)
 rm -rf "$g/logs" "$g/FETCH_HEAD" "$g/index" "$g/description" "$g/info" "$g/hooks" "$g/packed-refs" "$g/refs/tags"
@@ -123,8 +168,8 @@ echo "$c" >"$g/refs/remotes/origin/tree"
 echo "$c" >"$g/refs/heads/tree"
 echo 'ref: refs/heads/tree' >"$g/HEAD"
 printf '[remote "origin"]\n\turl=https://github.com/plan2001-kernel/plan9-wasm32\n' >"$g/config"
-git -C "$root" ls-tree -r --name-only tree | sed 's/^/T NOQID 0 /' >"$g/INDEX9"
-removed=$(git -C "$root" diff --name-only --diff-filter=D refs/9front/front tree | wc -l)
+git -C "$root" ls-tree -r --name-only "$revision" | sed 's/^/T NOQID 0 /' >"$g/INDEX9"
+removed=$(git -C "$root" diff --name-only --diff-filter=D refs/9front/front "$revision" | wc -l)
 # the proto: every file and directory, owned by sys as 9front's distproto has them (mkfs -U, the
 # installer's copydist, keeps the owners; the host's mean nothing to the machine's file server)
 python3 - "$out" "$d/proto" <<'PY'
@@ -143,7 +188,32 @@ with open(proto, 'w') as o:
 PY
 rm -f "$d/plan9-wasm32.iso"
 (cd "$d" && PATH=$PLAN9/bin:$PATH "$PLAN9/bin/dump9660" -M -c9j -p "$d/proto" -s "$out" -v 'Plan9-wasm32' "$d/plan9-wasm32.iso")
-echo "dist: $d/plan9-wasm32.iso ($(du -h "$d/plan9-wasm32.iso" | cut -f1)): the tree $(git -C "$root" rev-parse --short tree) and its git, $(find "$out/wasm32/bin" -type f | wc -l) programs, $removed off-topic files left out; $(wc -l <"$d/failed") build failures here (build/dist/failed)"
+# Older plan9port dump9660 puts a byte count in the volume-space field.
+# ISO 9660 stores the count in logical blocks, in both byte orders.
+python3 - "$d/plan9-wasm32.iso" <<'PYISO'
+import struct
+import sys
+
+with open(sys.argv[1], 'r+b') as iso:
+    iso.seek(16 * 2048)
+    while True:
+        offset = iso.tell()
+        descriptor = iso.read(2048)
+        if len(descriptor) != 2048 or descriptor[1:6] != b'CD001':
+            raise SystemExit('dist: invalid ISO volume descriptor')
+        if descriptor[0] == 255:
+            break
+        if descriptor[0] in (1, 2):
+            size = int.from_bytes(descriptor[80:84], 'little')
+            if size >= 2048 and size % 2048 == 0:
+                iso.seek(0, 2)
+                if size <= iso.tell() <= size + 64 * 2048:
+                    blocks = size // 2048
+                    iso.seek(offset + 80)
+                    iso.write(struct.pack('<I', blocks) + struct.pack('>I', blocks))
+        iso.seek(offset + 2048)
+PYISO
+echo "dist: $d/plan9-wasm32.iso ($(du -h "$d/plan9-wasm32.iso" | cut -f1)): the tree $(git -C "$root" rev-parse --short "$revision") and its git, $(find "$out/wasm32/bin" -type f | wc -l) programs, $removed off-topic files left out; $(wc -l <"$d/failed") build failures here (build/dist/failed)"
 # the live image (as 9front's ISO boots): the page, the kernel, its boot file system and plan9.ini
 # - cdboot: /boot/init mounts the CD (iso=: the page's read-only disk, sdW1) as the root
 live=$d/live

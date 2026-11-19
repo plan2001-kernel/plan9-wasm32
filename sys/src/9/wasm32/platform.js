@@ -1042,6 +1042,12 @@ export async function boot(url, front = {}) {
 		dw.onmessage = (e) => { if (e.data.log !== undefined) console.log('KLOG ' + e.data.log); };
 		return { dw, size: r.diskready, ro: w.role === 'httpdisk' };
 	}));
+	if ((front.needdisk && !dws[0]) || (front.dist && !dws[1])) {
+		for (const d of dws) d?.dw.terminate();
+		if (front.needdisk && !dws[0])
+			throw new Error('Cannot open the local Plan9 disk. Check browser storage quota and close any other Plan9 tab.');
+		throw new Error('Cannot read the Plan9 installation ISO.');
+	}
 	const { mem, pa, fb, regs } = firmware(front, dws.map((d) => d && { size: d.size, ro: d.ro }));
 	dws.forEach((d, i) => {
 		if (!d) return;

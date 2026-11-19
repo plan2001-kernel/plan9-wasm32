@@ -7,13 +7,16 @@
 > (`docs/plan2001-server.md`).  The instructions below are the same for the
 > public instance and a local build.
 
-As 9front is installed on a PC: boot the live image, run `inst/start`,
-reboot from the disk; then the machine builds its own system from its
-source, and updates it with git.
+As 9front is installed on a PC: boot the live image (from this site, or
+from the downloaded ISO), run `inst/start`, and reboot from the disk.
+The installer copies the prebuilt system to the browser's OPFS disk; the
+machine then builds the rest from its source, and updates it with git.
 
 ## The distribution
 
-A binary base, the tools, and the whole source with its git:
+The published ISO contains the prebuilt wasm32 binaries, APE and native
+libraries, Acme programs and source with its Git history. Ghostscript is
+excluded.
 
 - **The source** is this repository's `tree` branch (`tools/treebranch`),
   a snapshot: 9front's release (its commit's files, not its history -
@@ -21,18 +24,14 @@ A binary base, the tools, and the whole source with its git:
   it (the port, 3c/3a/3l, the patched files), without 9front's jokes and
   quotations (`tools/dist.deny`); a new release or a new main is one more
   commit.  Its root is the machine's `/`.
-- **The ISO** (`tools/dist`: `build/dist/plan9-wasm32.iso`, plan9port's
-  dump9660, `-c9j` as 9front's mkfile) has the branch's files, and built
-  for wasm32 only the base system and the tools (`tools/dist.base`: the
-  file servers, rc and the commands the live system, termrc, rio and
-  inst/start run, the network, an editor; 3c/3a/3l, mk, yacc, lex, ar,
-  pcc, git), the libraries (APE's too: /wasm32/lib/ape) and the boot
-  materials, the directories mk install puts the rest in (/wasm32/bin/ape,
-  games ...) - and in
-  `/dist/9front/.git` the branch, its work tree the root, as 9front's
-  ISO has its repository.  `tools/dist` builds the whole
-  release here too (`build/dist/failed`: what does not build yet): a
-  check of the source, and where the base comes from.
+- **The ISO** (`tools/dist`) is ISO 9660 with 9front extensions and Joliet.
+  For the binary release, `DIST_PREBUILT` points to an export of
+  `wasm32/bin`, `wasm32/lib`, the wasm32 kernel, init and boot FAT
+  materials, and `acme/bin/wasm32`. `DIST_REVISION` identifies the source
+  used to build them. The ISO's `/dist/wasm32.sha256` lists the program
+  and library checksums. The release includes its source fixes in the
+  Git tree under `/dist/9front`. Without `DIST_PREBUILT`, the local
+  developer build packages the base selected by `tools/dist.base`.
 - **Public distribution:** https://plan2001.com/plan9-wasm32/ downloads the
   ISO from `/iso/` and boots it from the server (HTTP Range requests), or
   the page boots the installed system from the browser's disk.  Locally,
@@ -92,10 +91,10 @@ glenda's profile, rio.  The live system is a guest: nothing is written.
 
 - **configfs**: hjfs, gefs or cwfs64x.
 - **partdisk**: the disk is `sdW0`, a file in the origin's private file
-  system (OPFS, 4 GB by default, `?disk=MB`); `gpt`, then edisk's
+  system (OPFS, 1792 MiB for a fresh disk, `?disk=MB` to set the size); `gpt`, then edisk's
   suggestion (`w`, `q`): esp and plan9.
 - **prepdisk**: prep's suggestion: 9fat, nvram, fs (or the esp as 9fat).
-- **mountfs**.
+- **mountfs**: for hjfs choose the `fs` partition and enter `128` MiB for the cache. Reaming erases the selected filesystem.
 - **confignet**: the Ethernet card, `/net/ether0` (`docs/kernel.md`):
   automatic (DHCP from the gateway's network) or manual.
 - **mountdist** (`/`: the live root), **copydist** (the whole

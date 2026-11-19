@@ -1,0 +1,11 @@
+--- a/rc/bin/inst/copydist
++++ b/rc/bin/inst/copydist
+@@ -17,7 +17,7 @@
+ 	}
+ case go
+ 	rm -f /tmp/copydone
+-	disk/mkfs -z 16372 -U -s /n/dist -d /n/newfs /sys/lib/sysconfig/proto/allproto
++	disk/mkfs -z 16372 -U -s /n/dist -d /n/newfs /sys/lib/sysconfig/proto/allproto || exit $status
+ 	touch /tmp/copydone
+ 
+ case checkdone

@@ -1,0 +1,27 @@
+--- a/sys/src/cmd/size.c
++++ b/sys/src/cmd/size.c
+@@ -8,6 +8,8 @@
+ {
+ 	int fd;
+ 	Fhdr f;
++	char magic[4];
++	Dir *d;
+ 
+ 	if((fd = open(file, OREAD)) < 0){
+ 		fprint(2, "size: ");
+@@ -20,6 +22,15 @@
+ 		close(fd);
+ 		return 0;
+ 	}
++	if(pread(fd, magic, sizeof magic, 0) == sizeof magic && memcmp(magic, "\0asm", 4) == 0){
++		d = dirfstat(fd);
++		if(d != nil){
++			print("%lldt + 0d + 0b = %lld\t%s (wasm)\n", d->length, d->length, file);
++			free(d);
++			close(fd);
++			return 0;
++		}
++	}
+ 	fprint(2, "size: %s not an a.out\n", file);
+ 	close(fd);
+ 	return 1;
