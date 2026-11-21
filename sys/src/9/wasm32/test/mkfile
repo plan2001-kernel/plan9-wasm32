@@ -3,7 +3,7 @@
 # the kernel's test programs (tools/test/run), not installed: the tests'
 # boot file system takes them from here (test.proto), as 3.NAME.  3c's own
 # tests that run on the kernel are in /sys/src/cmd/3c/test.
-TESTS=c3a c3b c3d d2 d3 d4 d5 fault forkloop
+TESTS=c3a c3b c3d d2 d3 d4 d5 fault forkloop benchspawn
 CTESTS=hello fork dclock rfmem threads bytes preempt
 CFLAGS=-FVw
 
