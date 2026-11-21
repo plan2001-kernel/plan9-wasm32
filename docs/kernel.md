@@ -17,6 +17,13 @@ page boots it as firmware boots a PC's kernel (`docs/boot.md`).
   `Atomics.wait`, ready stores and notifies.  There is no run queue,
   priority or preemption in the kernel.  To `port/`, the machine has one
   CPU, `MACHP(0)`, the boot Worker, which is the clock (`clock.c`).
+- The page keeps a pool of Workers already started, each with its kernel
+  instance made (`platform.js`: role `warm`), and a proc's Worker (a
+  fork's child, a helper, an rfork(RFMEM) child) is taken from it; the
+  pool fills again behind.  `?pool=N` sets its size (2; 0: a new Worker
+  for each proc).  Proc Workers start from a Blob of `platform.js`, made
+  once: none fetches it again (the server's `no-store`/`no-cache`), and
+  all are the page's own version.
 - A user program is a module of its own on its proc's Worker, its memory
   its own (`docs/wasm32.md`: one module, one address space).  Its system
   call, `plan9.syscall(n, a)`, comes to `trap.c`: the arguments and the

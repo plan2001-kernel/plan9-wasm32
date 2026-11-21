@@ -648,14 +648,37 @@ function imports(env) {
 	return { plan9: { syscall: () => -1n }, platform };
 }
 
-// on a Worker: the kernel, and what this CPU runs
-function cpu({ module, mem, role, fn, arg, sp, user }) {
+// on a Worker: the kernel's instance on the memory, its env
+function ydin(module, mem) {
 	const env = { mem, x: null, post: (m, t) => postMessage(m, t ?? []), user: null, exec: null, fork: null, forkimage: null,
 		rfmem: null, note: null, noted: false };
-	if (user) env.exec = user;	/* a fork's child */
+	const inst = new WebAssembly.Instance(module, imports(env));
+	env.x = inst.exports;
+	return env;
+}
+
+/*
+ * Worker-poolin Worker (sivun spawn): ytimen instanssi luodaan jo ennen
+ * työtä, joten fork, helper tai rfork(RFMEM) ei odota sitä.  Instanssin
+ * luonti ei kirjoita jaettuun muistiin (ytimen data alustetaan vain
+ * boot-Workerissa, _init).  Epäonnistunut lämmitys jätetään: työ luo
+ * instanssin itse ja raportoi virheen kuten ennenkin.
+ */
+let lammin = null;
+function lammita({ module, mem }) {
 	try {
-		const inst = new WebAssembly.Instance(module, imports(env));
-		env.x = inst.exports;
+		lammin = ydin(module, mem);
+	} catch (e) {
+		lammin = null;
+	}
+}
+
+// on a Worker: the kernel, and what this CPU runs
+function cpu({ module, mem, role, fn, arg, sp, user }) {
+	try {
+		const env = lammin ?? ydin(module, mem);
+		lammin = null;
+		if (user) env.exec = user;	/* a fork's child */
 		if (role === 'boot') {
 			env.x._init();		// the kernel's data, once
 			/* the entry ABI (docs/boot.md): _start(BootInfo's address), as a C call - at SP */
@@ -687,7 +710,8 @@ function cpu({ module, mem, role, fn, arg, sp, user }) {
 }
 
 if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope)
-	self.onmessage = (e) => e.data.role === 'disk' ? disk(e.data) : e.data.role === 'httpdisk' ? httpdisk(e.data) : cpu(e.data);
+	self.onmessage = (e) => e.data.role === 'disk' ? disk(e.data) : e.data.role === 'httpdisk' ? httpdisk(e.data)
+		: e.data.role === 'warm' ? lammita(e.data) : cpu(e.data);
 
 /*
  * The disk Worker (devsdw.c): the machine's disk is a file in the
@@ -1015,6 +1039,30 @@ function etheraddr() {
 	return ea;
 }
 
+/*
+ * Prosessien Workereiden skripti: tämä moduuli kerran Blob-URL:ksi.
+ * Palvelin lähettää sivun tiedostot no-store-otsakkeella (uusi versio heti
+ * käyttöön), jolloin jokainen new Worker(import.meta.url) haki ja jäsensi
+ * platform.js:n uudelleen: noin 40 ms jokaisessa forkissa.  Blob-URL:sta
+ * jokainen Worker saa sivun oman version ilman verkkoa.  Jo Blob-URL:sta
+ * ladattu moduuli (levyn oma firmware, kernel.html) tai epäonnistunut
+ * haku: import.meta.url kuten ennenkin.  Levyjen Workerit käyttävät yhä
+ * import.meta.url:ia, koska httpdisk avaa suhteellisia osoitteita.
+ */
+async function workerurl() {
+	const me = import.meta.url;
+	if (!/^https?:/.test(me))
+		return me;
+	try {
+		const r = await fetch(me);
+		if (!r.ok)
+			return me;
+		return URL.createObjectURL(new Blob([await r.text()], { type: 'text/javascript' }));
+	} catch (e) {
+		return me;
+	}
+}
+
 export async function boot(url, front = {}) {
 	front = { ...front, ea: front.ea ?? etheraddr() };
 	/* the kernel: a URL, or its bytes (the disk's: diskboot) */
@@ -1068,7 +1116,7 @@ export async function boot(url, front = {}) {
 		}
 		if (kbdq.length) kbdtimer = setTimeout(kbdpump, 5);	/* the ring is full: when the kernel has read */
 	};
-	const me = import.meta.url;
+	const me = await workerurl();
 	// a proc's Worker the page could not make: -1 in its word (procspawn waits on it)
 	const failed = (job, why) => {
 		console.log('KLOG platform: no Worker for a proc: ' + why);
@@ -1346,35 +1394,73 @@ export async function boot(url, front = {}) {
 
 	/* a test's: the nth Worker of a kind is not made - a fork's child, a helper, an rfork(RFMEM) child's (platform.h) */
 	const fails = { 1: front.failfork, 2: front.failhelper, 3: front.failrfmem }, made = { 1: 0, 2: 0, 3: 0 };
+	/*
+	 * Worker-pooli: POOLI valmiiksi käynnistettyä Workeria, joiden ydin on
+	 * jo instansioitu (role 'warm').  Proc saa poolista Workerin heti, ja
+	 * pooli täydentyy taustalla.  Boot-Worker tehdään aina erikseen.
+	 * ?pool=0 tai front.pool = 0: ei poolia, Worker per proc kuten ennen.
+	 */
+	const POOLI = Number.isInteger(front.pool) && front.pool >= 0 ? front.pool : 2;
+	const pooli = [];
+	const viesti = (e) => {
+		const m = e.data;
+		if (m.eia) { eia.push(m.eia); front.eia?.(m.eia); }
+		if (m.spawn) spawn({ module, mem, role: 'proc', ...m.spawn });
+		if (m.log !== undefined) console.log('KLOG ' + m.log);
+		if (m.ring !== undefined) ring = m.ring;
+		if (m.flush) screen.flush(m.flush);
+		if (m.cursor) screen.cursor(m.cursor);
+		if (m.mring !== undefined) screen.mring = m.mring;
+		if (m.ether !== undefined) ether.start(m.ether);
+		if (m.ethersend) ether.send(m.ethersend);
+		if (m.kring !== undefined) kring = m.kring;
+		if (m.webauthn) passkey.request(m.webauthn);
+		if (m.halt !== undefined) { console.log('KERNEL-HALT ' + m.halt); front.halt?.(m.halt); }
+	};
+	/* uusi Worker; virheont.po työtä vain poistaa sen poolista */
+	const uusi = () => {
+		const w = new Worker(me, { type: 'module' });
+		w.onmessage = viesti;
+		w.onerror = (e) => {
+			const i = pooli.indexOf(w);
+			if (i >= 0) {
+				pooli.splice(i, 1);
+				console.log('KLOG platform: a pooled Worker failed: ' + e.message);
+				return;
+			}
+			if (!w.job || !failed(w.job, e.message)) console.log('KERNEL-HALT platform: worker: ' + e.message);
+		};
+		return w;
+	};
+	const tayta = () => {
+		while (pooli.length < POOLI) {
+			let w;
+			try {
+				w = uusi();
+			} catch (e) {
+				return;	/* seuraava spawn tekee Workerinsa itse ja raportoi */
+			}
+			w.postMessage({ role: 'warm', module, mem });
+			pooli.push(w);
+		}
+	};
 	const spawn = (job) => {
 		if (fails[job.what] && ++made[job.what] === fails[job.what]) {
 			failed(job, 'the test fails Worker ' + made[job.what] + ' of kind ' + job.what);
 			return;
 		}
-		let w;
-		try {
-			w = new Worker(me, { type: 'module' });
-		} catch (e) {
-			if (!failed(job, e)) console.log('KERNEL-HALT platform: worker: ' + e);
-			return;
+		let w = job.role === 'boot' ? null : pooli.shift();
+		if (!w) {
+			try {
+				w = uusi();
+			} catch (e) {
+				if (!failed(job, e)) console.log('KERNEL-HALT platform: worker: ' + e);
+				return;
+			}
 		}
-		w.onmessage = (e) => {
-			const m = e.data;
-			if (m.eia) { eia.push(m.eia); front.eia?.(m.eia); }
-			if (m.spawn) spawn({ module, mem, role: 'proc', ...m.spawn });
-			if (m.log !== undefined) console.log('KLOG ' + m.log);
-			if (m.ring !== undefined) ring = m.ring;
-			if (m.flush) screen.flush(m.flush);
-			if (m.cursor) screen.cursor(m.cursor);
-			if (m.mring !== undefined) screen.mring = m.mring;
-			if (m.ether !== undefined) ether.start(m.ether);
-			if (m.ethersend) ether.send(m.ethersend);
-			if (m.kring !== undefined) kring = m.kring;
-			if (m.webauthn) passkey.request(m.webauthn);
-			if (m.halt !== undefined) { console.log('KERNEL-HALT ' + m.halt); front.halt?.(m.halt); }
-		};
-		w.onerror = (e) => { if (!failed(job, e.message)) console.log('KERNEL-HALT platform: worker: ' + e.message); };
+		w.job = job;
 		w.postMessage(job, job.user ? [job.user.snap.buffer] : []);
+		tayta();
 	};
 	window.plan9 = {
 		get flushes() { return screen.flushes; },
