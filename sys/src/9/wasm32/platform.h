@@ -16,6 +16,7 @@ void	plathalt(char*);			/* the machine stops: the page says so */
 
 /* the program on this proc's Worker: its own module and memory (trap.c, sysproc.c) */
 int	platexec(void*, long, void*, long, int);	/* the next program: its module's bytes, argv's strings, argc; -1 not a module */
+int	platspawn(void*, long, void*, long, int);	/* spawnin lapsen ohjelma (moduulin tavut, argv:n merkkijonot, argc) seuraavan platnewproc:n työksi; -1 ei moduuli */
 typedef struct Ufns Ufns;
 struct Ufns		/* the kernel's functions for the program's Worker (trap.c) */
 {

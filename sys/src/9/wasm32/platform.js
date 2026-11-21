@@ -210,7 +210,33 @@ function runprog(env, K, host, pid, job) {
 	const h = { multi: false, cos: [], cur: 0, ctxs: [], regions: new Map(), memdone: 0,
 		block: 0, preempt: 0, ctxswitch: undefined, slice: 0 };
 	let x = null;
-	const inst = new WebAssembly.Instance(job.module, { plan9: { syscall: (n, a) => sys(n, a >>> 0) } });
+	let inst;
+	try {
+		inst = new WebAssembly.Instance(job.module, { plan9: { syscall: (n, a) => sys(n, a >>> 0) } });
+	} catch (e) {
+		if (!(e instanceof RangeError || e instanceof WebAssembly.RuntimeError || e instanceof WebAssembly.LinkError))
+			throw e;
+		/*
+		 * Ohjelmaa ei saatu käyntiin: muistia ei saatu (RangeError ja
+		 * muistiviesti: selaimen Wasm-muistivarausten raja, noin 55-65
+		 * yhtäaikaista prosessia välilehteä kohden) tai muu
+		 * instansiointivirhe (käynnistysfunktion trap, puuttuva import).
+		 * Proc päättyy syyn kertovaan viestiin kuten ohjelmavirheessä,
+		 * kone jatkaa.  Käyttäjämuistia ei ole, joten exits-kutsun
+		 * argumentti ja viesti annetaan pienessä puskurissa, jonka ydin
+		 * lukee platcopyin/platustrlen-funktioilla.
+		 */
+		const muisti = e instanceof RangeError && /memory/i.test(e.message);
+		const syy = (muisti ? 'sys: no memory for the program: ' : 'sys: the program could not start: ') + e.message;
+		const b = new ArrayBuffer(8192), m = new TextEncoder().encode(syy.slice(0, 120) + '\0');
+		new Uint8Array(b).set(m, 4112);
+		new DataView(b).setUint32(4096, 4112, true);
+		env.user = { x: null, mem: { buffer: b } };
+		console.log('KLOG platform: ' + e.message);
+		postMessage({ log: 'platform: ' + e.message });
+		kcall(env, K.syscall, 8, 4096);	/* pexit, no return */
+		throw new Error('platform: exits returned');
+	}
 	x = inst.exports;
 	const mem = x.memory, tbl = x.table;
 	env.user = { x, mem };
@@ -558,7 +584,7 @@ function imports(env) {
 		platnewproc: () => {
 			const user = env.forkimage;
 			env.forkimage = null;
-			env.post({ spawn: { fn: arg(0), arg: arg(1), sp: arg(2), up: arg(3), what: iarg(4), user } }, user ? [user.snap.buffer] : []);
+			env.post({ spawn: { fn: arg(0), arg: arg(1), sp: arg(2), up: arg(3), what: iarg(4), user } }, user?.snap ? [user.snap.buffer] : []);
 		},
 		platnote: () => {
 			const k = new Uint8Array(env.mem.buffer);
@@ -586,6 +612,21 @@ function imports(env) {
 			try {
 				const module = new WebAssembly.Module(k.slice(arg(0), arg(0) + iarg(1)));
 				env.exec = { module, args: k.slice(arg(2), arg(2) + iarg(3)), argc: iarg(4) };
+				env.x.retw.value = 0;
+			} catch (e) {
+				env.x.retw.value = -1;
+			}
+		},
+		/*
+		 * spawn (sysproc.c): lapsen ohjelma käännetään kutsujan Workerissa ja
+		 * annetaan seuraavan platnewproc:n mukana lapsen Workerin työksi
+		 * exec-muodossa ({ module, args, argc }: tuore ohjelma, ei muistikuvaa)
+		 */
+		platspawn: () => {
+			const k = new Uint8Array(env.mem.buffer);
+			try {
+				const module = new WebAssembly.Module(k.slice(arg(0), arg(0) + iarg(1)));
+				env.forkimage = { module, args: k.slice(arg(2), arg(2) + iarg(3)), argc: iarg(4) };
 				env.x.retw.value = 0;
 			} catch (e) {
 				env.x.retw.value = -1;
@@ -648,14 +689,39 @@ function imports(env) {
 	return { plan9: { syscall: () => -1n }, platform };
 }
 
-// on a Worker: the kernel, and what this CPU runs
-function cpu({ module, mem, role, fn, arg, sp, user }) {
+// on a Worker: the kernel's instance on the memory, its env
+function ydin(module, mem) {
 	const env = { mem, x: null, post: (m, t) => postMessage(m, t ?? []), user: null, exec: null, fork: null, forkimage: null,
 		rfmem: null, note: null, noted: false };
-	if (user) env.exec = user;	/* a fork's child */
+	const inst = new WebAssembly.Instance(module, imports(env));
+	env.x = inst.exports;
+	return env;
+}
+
+/*
+ * Worker-poolin Worker (sivun spawn): ytimen instanssi luodaan jo ennen
+ * työtä, joten fork, helper tai rfork(RFMEM) ei odota sitä.  Instanssin
+ * luonti ei kirjoita jaettuun muistiin (ytimen data alustetaan vain
+ * boot-Workerissa, _init).  Tulos kuitataan sivulle ({ warm: true } tai
+ * { warm: false, why }): epäonnistunut Worker poistetaan poolista.
+ */
+let lammin = null;
+function lammita({ module, mem }) {
 	try {
-		const inst = new WebAssembly.Instance(module, imports(env));
-		env.x = inst.exports;
+		lammin = ydin(module, mem);
+		postMessage({ warm: true });
+	} catch (e) {
+		lammin = null;
+		postMessage({ warm: false, why: String(e) });
+	}
+}
+
+// on a Worker: the kernel, and what this CPU runs
+function cpu({ module, mem, role, fn, arg, sp, user }) {
+	try {
+		const env = lammin ?? ydin(module, mem);
+		lammin = null;
+		if (user) env.exec = user;	/* a fork's child */
 		if (role === 'boot') {
 			env.x._init();		// the kernel's data, once
 			/* the entry ABI (docs/boot.md): _start(BootInfo's address), as a C call - at SP */
@@ -687,7 +753,8 @@ function cpu({ module, mem, role, fn, arg, sp, user }) {
 }
 
 if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope)
-	self.onmessage = (e) => e.data.role === 'disk' ? disk(e.data) : e.data.role === 'httpdisk' ? httpdisk(e.data) : cpu(e.data);
+	self.onmessage = (e) => e.data.role === 'disk' ? disk(e.data) : e.data.role === 'httpdisk' ? httpdisk(e.data)
+		: e.data.role === 'warm' ? lammita(e.data) : cpu(e.data);
 
 /*
  * The disk Worker (devsdw.c): the machine's disk is a file in the
@@ -1015,6 +1082,60 @@ function etheraddr() {
 	return ea;
 }
 
+/* tämän tiedoston sisällön tiiviste (tools/platstamp); lähdepuussa @PLATHASH@ */
+const PLATHASH = '@PLATHASH@';
+
+/*
+ * Prosessien Workereiden skripti: tämä moduuli kerran Blob-URL:ksi.
+ * Palvelin lähettää sivun tiedostot no-store-otsakkeella (uusi versio heti
+ * käyttöön), jolloin jokainen new Worker(import.meta.url) haki ja jäsensi
+ * platform.js:n uudelleen: noin 40 ms jokaisessa forkissa.  Blob-URL:sta
+ * jokainen Worker saa sivun oman version ilman verkkoa.  Jo Blob-URL:sta
+ * ladattu moduuli (levyn oma firmware, kernel.html) käyttää omaa Blob-URL:iaan.
+ * Levy-Workerit käyttävät yhä import.meta.url:ia, sillä httpdiskin URL:t
+ * ovat suhteellisia.  HTTP-lähteellä haettu tiedosto varmennetaan kokonaan:
+ * SHA-256 lasketaan uudelleen ilman tools/platstamp:n lisäämää leimaa.
+ * Poikkeustilanteessa (HTTP-virhe, uusi versio, muuttunut sisältö)
+ * käynnistys keskeytetään; tarkistamatonta Workeria ei luoda.
+ */
+async function workerurl() {
+	const me = import.meta.url;
+	if (!/^https?:/.test(me))
+		return me;	/* the disk's already-loaded Blob firmware */
+	if (!/^[0-9a-f]{64}$/.test(PLATHASH))
+		throw new Error('platform.js is not SHA-256 stamped: build it with tools/platstamp');
+	let reason = 'the source was unavailable';
+	for (const cache of ['force-cache', 'no-store']) {
+		try {
+			const r = await fetch(me, { cache });
+			if (!r.ok) {
+				reason = 'HTTP ' + r.status;
+				continue;
+			}
+			const t = await r.text();
+			const stamped = `const PLATHASH = '${PLATHASH}';`;
+			if (!t.includes(stamped)) {
+				reason = 'the module version changed';
+				continue;
+			}
+			/* Hash the entire downloaded source, with only its stamp restored.
+			 * tools/platstamp computes SHA-256 on precisely this source. */
+			const original = t.replace(stamped, "const PLATHASH = '@PLATHASH@';");
+			const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(original));
+			const actual = [...new Uint8Array(digest)].map(v => v.toString(16).padStart(2, '0')).join('');
+			if (actual !== PLATHASH) {
+				reason = 'SHA-256 mismatch in the downloaded source';
+				continue;
+			}
+			return URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
+		} catch (e) {
+			reason = String(e);
+		}
+	}
+	/* Never fall back to an unchecked URL: its Worker could use a different ABI. */
+	throw new Error('platform.js Worker source could not be verified (' + reason + '): reload the page');
+}
+
 export async function boot(url, front = {}) {
 	front = { ...front, ea: front.ea ?? etheraddr() };
 	/* the kernel: a URL, or its bytes (the disk's: diskboot) */
@@ -1068,7 +1189,7 @@ export async function boot(url, front = {}) {
 		}
 		if (kbdq.length) kbdtimer = setTimeout(kbdpump, 5);	/* the ring is full: when the kernel has read */
 	};
-	const me = import.meta.url;
+	const me = await workerurl();
 	// a proc's Worker the page could not make: -1 in its word (procspawn waits on it)
 	const failed = (job, why) => {
 		console.log('KLOG platform: no Worker for a proc: ' + why);
@@ -1346,38 +1467,116 @@ export async function boot(url, front = {}) {
 
 	/* a test's: the nth Worker of a kind is not made - a fork's child, a helper, an rfork(RFMEM) child's (platform.h) */
 	const fails = { 1: front.failfork, 2: front.failhelper, 3: front.failrfmem }, made = { 1: 0, 2: 0, 3: 0 };
+	/*
+	 * Worker-pooli: POOLI valmiiksi käynnistettyä Workeria, joiden ydin on
+	 * jo instansioitu (role 'warm').  Proc saa poolista Workerin heti, ja
+	 * pooli täydentyy taustalla.  Boot-Worker tehdään aina erikseen.
+	 * ?pool=0 tai front.pool = 0: ei poolia, Worker per proc kuten ennen;
+	 * enintään POOLIMAX (jokainen idle-Worker on säie ja V8-ympäristö).
+	 * Workerin lämmitys kuitataan (w.lammin); tilasto: window.plan9.pool.
+	 */
+	const POOLIMAX = 8;
+	const POOLI = Number.isInteger(front.pool) ? Math.min(Math.max(front.pool, 0), POOLIMAX) : 2;
+	const pooli = [];
+	/* proc-Workerit: lämmin osuma, poolista mutta lämmitys kesken, poolin ohi uusi; epäonnistuneet lämmitykset */
+	const tilasto = { lammin: 0, kesken: 0, uusi: 0, lampovirhe: 0 };
+	/*
+	 * Lämmitysvirheen jälkeen pooli täydentyy vasta tauon jälkeen: 100 ms,
+	 * kaksinkertaistuen enintään 5 s:iin, onnistunut lämmitys palauttaa
+	 * sen.  Muistipaineessa jokainen proc ei siis käynnistä uutta
+	 * epäonnistuvaa lämmityssarjaa.  Yhtäaikaisia lämmityksiä on enintään
+	 * POOLI: lämpenevät Workerit ovat poolissa.
+	 */
+	const TAUKO0 = 100, TAUKOMAX = 5000;
+	let tauko = 0, taukoviive = TAUKO0, taukoajastin = 0;
+	const lampo = (w, m) => {
+		if (m.warm) {
+			w.lammin = true;
+			taukoviive = TAUKO0;
+			return;
+		}
+		tilasto.lampovirhe++;
+		console.log('KLOG platform: a pooled Worker could not make its kernel: ' + m.why);
+		const i = pooli.indexOf(w);
+		if (i >= 0) {
+			pooli.splice(i, 1);
+			w.terminate();
+		}
+		tauko = performance.now() + taukoviive;
+		taukoviive = Math.min(taukoviive * 2, TAUKOMAX);
+	};
+	const viesti = (e) => {
+		const m = e.data;
+		if (m.warm !== undefined) { lampo(e.target, m); return; }
+		if (m.eia) { eia.push(m.eia); front.eia?.(m.eia); }
+		if (m.spawn) spawn({ module, mem, role: 'proc', ...m.spawn });
+		if (m.log !== undefined) console.log('KLOG ' + m.log);
+		if (m.ring !== undefined) ring = m.ring;
+		if (m.flush) screen.flush(m.flush);
+		if (m.cursor) screen.cursor(m.cursor);
+		if (m.mring !== undefined) screen.mring = m.mring;
+		if (m.ether !== undefined) ether.start(m.ether);
+		if (m.ethersend) ether.send(m.ethersend);
+		if (m.kring !== undefined) kring = m.kring;
+		if (m.webauthn) passkey.request(m.webauthn);
+		if (m.halt !== undefined) { console.log('KERNEL-HALT ' + m.halt); front.halt?.(m.halt); }
+	};
+	/* uusi Worker; virheont.po työtä vain poistaa sen poolista */
+	const uusi = () => {
+		const w = new Worker(me, { type: 'module' });
+		w.onmessage = viesti;
+		w.onerror = (e) => {
+			const i = pooli.indexOf(w);
+			if (i >= 0) {
+				pooli.splice(i, 1);
+				console.log('KLOG platform: a pooled Worker failed: ' + e.message);
+				return;
+			}
+			if (!w.job || !failed(w.job, e.message)) console.log('KERNEL-HALT platform: worker: ' + e.message);
+		};
+		return w;
+	};
+	const tayta = () => {
+		const odota = tauko - performance.now();
+		if (odota > 0) {
+			if (!taukoajastin)
+				taukoajastin = setTimeout(() => { taukoajastin = 0; tayta(); }, odota);
+			return;
+		}
+		while (pooli.length < POOLI) {
+			let w;
+			try {
+				w = uusi();
+			} catch (e) {
+				return;	/* seuraava spawn tekee Workerinsa itse ja raportoi */
+			}
+			w.postMessage({ role: 'warm', module, mem });
+			pooli.push(w);
+		}
+	};
 	const spawn = (job) => {
 		if (fails[job.what] && ++made[job.what] === fails[job.what]) {
 			failed(job, 'the test fails Worker ' + made[job.what] + ' of kind ' + job.what);
 			return;
 		}
-		let w;
-		try {
-			w = new Worker(me, { type: 'module' });
-		} catch (e) {
-			if (!failed(job, e)) console.log('KERNEL-HALT platform: worker: ' + e);
-			return;
+		let w = job.role === 'boot' ? null : pooli.shift();
+		if (job.role !== 'boot')
+			tilasto[!w ? 'uusi' : w.lammin ? 'lammin' : 'kesken']++;
+		if (!w) {
+			try {
+				w = uusi();
+			} catch (e) {
+				if (!failed(job, e)) console.log('KERNEL-HALT platform: worker: ' + e);
+				return;
+			}
 		}
-		w.onmessage = (e) => {
-			const m = e.data;
-			if (m.eia) { eia.push(m.eia); front.eia?.(m.eia); }
-			if (m.spawn) spawn({ module, mem, role: 'proc', ...m.spawn });
-			if (m.log !== undefined) console.log('KLOG ' + m.log);
-			if (m.ring !== undefined) ring = m.ring;
-			if (m.flush) screen.flush(m.flush);
-			if (m.cursor) screen.cursor(m.cursor);
-			if (m.mring !== undefined) screen.mring = m.mring;
-			if (m.ether !== undefined) ether.start(m.ether);
-			if (m.ethersend) ether.send(m.ethersend);
-			if (m.kring !== undefined) kring = m.kring;
-			if (m.webauthn) passkey.request(m.webauthn);
-			if (m.halt !== undefined) { console.log('KERNEL-HALT ' + m.halt); front.halt?.(m.halt); }
-		};
-		w.onerror = (e) => { if (!failed(job, e.message)) console.log('KERNEL-HALT platform: worker: ' + e.message); };
-		w.postMessage(job, job.user ? [job.user.snap.buffer] : []);
+		w.job = job;
+		w.postMessage(job, job.user?.snap ? [job.user.snap.buffer] : []);
+		tayta();
 	};
 	window.plan9 = {
 		get flushes() { return screen.flushes; },
+		get pool() { return { koko: POOLI, vapaana: pooli.length, ...tilasto }; },
 		eia0bytes: () => { const b = new Uint8Array(eia.reduce((n, c) => n + c.length, 0)); let o = 0; for (const c of eia) { b.set(c, o); o += c.length; } return b; },
 		eia0out: () => new TextDecoder().decode(window.plan9.eia0bytes()),
 		eia0b64: () => { let s = ''; for (const c of window.plan9.eia0bytes()) s += String.fromCharCode(c); return btoa(s); },

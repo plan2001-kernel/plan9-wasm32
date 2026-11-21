@@ -17,6 +17,25 @@ page boots it as firmware boots a PC's kernel (`docs/boot.md`).
   `Atomics.wait`, ready stores and notifies.  There is no run queue,
   priority or preemption in the kernel.  To `port/`, the machine has one
   CPU, `MACHP(0)`, the boot Worker, which is the clock (`clock.c`).
+- The page keeps a pool of Workers already started, each with its kernel
+  instance made (`platform.js`: role `warm`), and a proc's Worker (a
+  fork's child, a helper, an rfork(RFMEM) child) is taken from it; the
+  pool fills again behind.  `?pool=N` sets its size (2; 0: a new Worker
+  for each proc; at most 8).  A Worker says when its kernel is made (or
+  could not be, and leaves the pool); `window.plan9.pool` counts the
+  procs that had a warm Worker, one still warming, or a new one; after a
+  failed warming the pool fills again only after a pause (100 ms,
+  doubling to 5 s).  Proc Workers start from a Blob of `platform.js`,
+  made once: none fetches it again.  The build stamps the file's hash in
+  it (`tools/platstamp`), and the Blob's source must match the page's
+  full SHA-256: the fetched source is rehashed after restoring its stamp
+  placeholder. An HTTP failure, content change or version mismatch fails
+  closed with a reload error; no unchecked Worker URL is used.
+  The disk firmware's Blob URL keeps its existing self-contained behavior.
+- Each program's memory is a WebAssembly.Memory of its own, and a tab
+  has room for only so many (about 55-65 procs at once in Chromium): a
+  program the browser cannot give memory ends with `sys: no memory for
+  the program: ...`, as a fault does, and the machine goes on.
 - A user program is a module of its own on its proc's Worker, its memory
   its own (`docs/wasm32.md`: one module, one address space).  Its system
   call, `plan9.syscall(n, a)`, comes to `trap.c`: the arguments and the
@@ -26,6 +45,17 @@ page boots it as firmware boots a PC's kernel (`docs/boot.md`).
 - fork: 3l's unwind and rewind of the stack (`docs/wasm32.md`); the
   kernel copies the memory for the child's Worker.  rfork(RFMEM) shares
   it: the child's Worker gets the same Memory.
+- spawn(file, argv, fd, nfd, flag) (system call 54, `sysproc.c`): a
+  program a proc of its own without fork - no copy of the caller's
+  memory, no unwind or rewind.  As rfork(RFPROC|RFFDG|flag) and the
+  child's exec(file, argv), but the program is read and compiled in the
+  caller's call, so its error (no file, not a program, a bad fd) is the
+  caller's -1 and there is no child.  fd: nfd words, pairs (from, to)
+  done in order on the child's copy of the caller's fds - from >= 0
+  dup(from, to), from -1 closes to - then exec's close-on-exec.  flag:
+  RFNOWAIT, RFNOTEG, RFNAMEG, RFCNAMEG, RFENVG, RFCENVG, RFREND, RFCFDG,
+  RFNOMNT; not RFMEM.  rc runs a simple command with it (its redirections
+  as the pairs), and forks if spawn fails, as before.
 
 ## Devices
 

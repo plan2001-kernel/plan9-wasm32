@@ -1,0 +1,27 @@
+ticks in it: ok
+spawned with args
+basic: pid ok, status ''
+pipe: read 'through the pipe
+'
+pipe: pid ok, status ''
+cexec closed
+other open
+cexec: pid ok, status ''
+nofile: -1 'file does not exist: '/bin/nonexistent''
+notprogram: -1 'exec header invalid'
+rfmem: -1 'bad arg in system call'
+badfd: -1 'fd out of range or not open'
+oddfd: -1 'bad arg in system call'
+spawned with args
+after the errors: pid ok, status ''
+nowait: no child to wait for: no living children
+namespace shared: pid ok, status ''
+namespace shared: /boot/rc there
+namespace RFNAMEG: pid ok, status ''
+namespace RFNAMEG: /boot/rc not there
+env shared: pid ok, status ''
+env shared: spawnenv child
+env RFENVG: pid ok, status ''
+env RFENVG: spawnenv unset
+concurrent: 30 spawned, 30 reaped, 30 ok
+over the memory limit: 90 spawned, 90 reaped, all

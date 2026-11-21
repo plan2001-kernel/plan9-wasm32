@@ -1,0 +1,20 @@
+ticks in it: ok
+one
+two
+      3
+      1
+to-stderr
+x
+y
+echo: write error: fd out of range or not open
+closed: 1
+x is local
+x after: 0
+/tmp
+/bin/spawnrc.rc:22: /bin/nonexistent: file does not exist: '/bin/nonexistent'
+nonexistent: 1
+1
+2
+3
+waited
+done

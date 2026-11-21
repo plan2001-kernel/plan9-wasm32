@@ -50,7 +50,7 @@ mkdir -p "$fat"
 "$here/bootfs" "$tree" "$fat/9wasm32.fs" "$w/bootfs.proto" >/dev/null
 v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
 sed "s|@VERSION@|$v|" "$w/kernel.html" >"$fat/index.html"
-cp "$w/platform.js" "$fat/platform.js"
+"$here/platstamp" "$w/platform.js" "$fat/platform.js"
 
 # the image's root: the tree branch's files (tools/treebranch: the source, as 9front's git has
 # it), the release's directories git does not keep (cfg, cron, mail, usr, tmp), the programs

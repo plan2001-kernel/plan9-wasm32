@@ -1,0 +1,113 @@
+--- a/sys/src/libc/9syscall/sys.h
++++ b/sys/src/libc/9syscall/sys.h
+@@ -50,3 +50,4 @@
+ #define	PWRITE		51
+ #define	TSEMACQUIRE	52
+ #define _NSEC		53
++#define	SPAWN		54
+--- a/sys/include/libc.h
++++ b/sys/include/libc.h
+@@ -755,6 +755,7 @@
+ extern	int	dup(int, int);
+ extern	int	errstr(char*, uint);
+ extern	int	exec(char*, char*[]);
++extern	int	spawn(char*, char*[], int*, int, int);
+ extern	int	execl(char*, ...);
+ extern	int	fork(void);
+ extern	int	rfork(int);
+--- a/sys/src/cmd/rc/exec.h
++++ b/sys/src/cmd/rc/exec.h
+@@ -76,6 +76,7 @@
+ 
+ void execcd(void), execwhatis(void), execeval(void), execexec(void);
+ int execforkexec(void);
++int execspawn(void);
+ void execexit(void), execshift(void);
+ void execwait(void), execumask(void), execdot(void), execflag(void);
+ void execfunc(var*), execcmds(io*, char*, var*, redir*);
+--- a/sys/src/cmd/rc/havefork.c
++++ b/sys/src/cmd/rc/havefork.c
+@@ -226,6 +226,11 @@
+ {
+ 	int pid;
+ 
++	/* spawn(2) ensin: ilman forkia; jos ei onnistu, fork tekee sen ja raportoi kuten ennen */
++	if((pid = execspawn()) >= 0){
++		addwaitpid(pid);
++		return pid;
++	}
+ 	switch(pid = Fork()){
+ 	case -1:
+ 		return -1;
+--- a/sys/src/cmd/rc/simple.c
++++ b/sys/src/cmd/rc/simple.c
+@@ -171,6 +171,69 @@
+ 	return argv;
+ }
+ 
++enum {
++	Maxops	= 64,	/* spawnin kuvaajaoperaatiot: sanaa, parit */
++};
++
++/* doredirin operaatiot spawnille: parit (from, to), from -1 sulkee to:n; -1 jos liikaa */
++static int
++redirops(redir *rp, int *ops, int n)
++{
++	if(rp==0)
++		return n;
++	n = redirops(rp->next, ops, n);
++	if(n < 0 || n+4 > Maxops)
++		return -1;
++	switch(rp->type){
++	case RDUP:
++		ops[n++] = rp->from;
++		ops[n++] = rp->to;
++		break;
++	case ROPEN:
++		if(rp->from==rp->to)
++			break;
++		ops[n++] = rp->from;
++		ops[n++] = rp->to;
++		ops[n++] = -1;
++		ops[n++] = rp->from;
++		break;
++	case RCLOSE:
++		ops[n++] = -1;
++		ops[n++] = rp->to;
++		break;
++	}
++	return n;
++}
++
++/*
++ * Komento omaksi prosessikseen ilman forkia (spawn(2)): execexecin
++ * polkuhaku, ympäristö ja uudelleenohjaukset, mutta lapsessa tehtävät
++ * Dup- ja Close-operaatiot annetaan spawnille.  Lapsen pid, tai -1:
++ * silloin execforkexec forkkaa, ja lapsen exec raportoi virheen.
++ */
++int
++execspawn(void)
++{
++	char **argv, *file;
++	int ops[Maxops], n, pid;
++	word *path;
++
++	if(runq->argv->words==0)
++		return -1;
++	if((n = redirops(runq->redir, ops, 0)) < 0)
++		return -1;
++	argv = mkargv(runq->argv->words);
++	Updenv();
++	pid = -1;
++	for(path = searchpath(argv[1], "path"); path && pid < 0; path = path->next){
++		file = makepath(path->word, argv[1]);
++		pid = spawn(file, argv+1, ops, n, RFREND);
++		free(file);
++	}
++	free(argv);
++	return pid;
++}
++
+ void
+ execexec(void)
+ {
