@@ -21,9 +21,19 @@ page boots it as firmware boots a PC's kernel (`docs/boot.md`).
   instance made (`platform.js`: role `warm`), and a proc's Worker (a
   fork's child, a helper, an rfork(RFMEM) child) is taken from it; the
   pool fills again behind.  `?pool=N` sets its size (2; 0: a new Worker
-  for each proc).  Proc Workers start from a Blob of `platform.js`, made
-  once: none fetches it again (the server's `no-store`/`no-cache`), and
-  all are the page's own version.
+  for each proc; at most 8).  A Worker says when its kernel is made (or
+  could not be, and leaves the pool); `window.plan9.pool` counts the
+  procs that had a warm Worker, one still warming, or a new one; after a
+  failed warming the pool fills again only after a pause (100 ms,
+  doubling to 5 s).  Proc Workers start from a Blob of `platform.js`,
+  made once: none fetches it again.  The build stamps the file's hash in
+  it (`tools/platstamp`), and the Blob's source must carry the page's
+  own: a different one (a version published since) stops the boot with
+  an error, never Workers of two versions.
+- Each program's memory is a WebAssembly.Memory of its own, and a tab
+  has room for only so many (about 55-65 procs at once in Chromium): a
+  program the browser cannot give memory ends with `sys: no memory for
+  the program: ...`, as a fault does, and the machine goes on.
 - A user program is a module of its own on its proc's Worker, its memory
   its own (`docs/wasm32.md`: one module, one address space).  Its system
   call, `plan9.syscall(n, a)`, comes to `trap.c`: the arguments and the

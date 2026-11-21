@@ -19,7 +19,8 @@ rm -rf "$live"; mkdir -p "$live"
 # its version in it (the commit, dirty if the tree is, and when it was made): a cached page shows
 v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
 sed "s|@VERSION@|$v|" "$w/kernel.html" >"$live/index.html"
-cp "$w/platform.js" "$tree/wasm32/9wasm32.wasm" "$live/"
+"$here/platstamp" "$w/platform.js" "$live/platform.js"
+cp "$tree/wasm32/9wasm32.wasm" "$live/"
 cp "$root/build/root.fs" "$live/9wasm32.fs"
 for f in "$live"/*; do gzip -9 -n -k "$f"; done
 echo "build: $live: $(cd "$live" && ls | grep -v '\.gz$' | tr '\n' ' ')"

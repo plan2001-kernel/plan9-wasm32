@@ -1,0 +1,8 @@
+#!/bin/bash
+# platform.js SRC:stä DST:hen, sen sisällön tiiviste (sha256, 16 heksaa)
+# merkin @PLATHASH@ paikalle: Workereiden lähde tarkistetaan sitä vasten
+# (platform.js: workerurl), ettei sivu ja Workerit ole eri versioita.
+#   tools/platstamp SRC DST
+set -e
+h=$(sha256sum "$1" | cut -c1-16)
+sed "s|@PLATHASH@|$h|" "$1" >"$2"

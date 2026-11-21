@@ -210,7 +210,33 @@ function runprog(env, K, host, pid, job) {
 	const h = { multi: false, cos: [], cur: 0, ctxs: [], regions: new Map(), memdone: 0,
 		block: 0, preempt: 0, ctxswitch: undefined, slice: 0 };
 	let x = null;
-	const inst = new WebAssembly.Instance(job.module, { plan9: { syscall: (n, a) => sys(n, a >>> 0) } });
+	let inst;
+	try {
+		inst = new WebAssembly.Instance(job.module, { plan9: { syscall: (n, a) => sys(n, a >>> 0) } });
+	} catch (e) {
+		if (!(e instanceof RangeError || e instanceof WebAssembly.RuntimeError || e instanceof WebAssembly.LinkError))
+			throw e;
+		/*
+		 * Ohjelmaa ei saatu käyntiin: muistia ei saatu (RangeError ja
+		 * muistiviesti: selaimen Wasm-muistivarausten raja, noin 55-65
+		 * yhtäaikaista prosessia välilehteä kohden) tai muu
+		 * instansiointivirhe (käynnistysfunktion trap, puuttuva import).
+		 * Proc päättyy syyn kertovaan viestiin kuten ohjelmavirheessä,
+		 * kone jatkaa.  Käyttäjämuistia ei ole, joten exits-kutsun
+		 * argumentti ja viesti annetaan pienessä puskurissa, jonka ydin
+		 * lukee platcopyin/platustrlen-funktioilla.
+		 */
+		const muisti = e instanceof RangeError && /memory/i.test(e.message);
+		const syy = (muisti ? 'sys: no memory for the program: ' : 'sys: the program could not start: ') + e.message;
+		const b = new ArrayBuffer(8192), m = new TextEncoder().encode(syy.slice(0, 120) + '\0');
+		new Uint8Array(b).set(m, 4112);
+		new DataView(b).setUint32(4096, 4112, true);
+		env.user = { x: null, mem: { buffer: b } };
+		console.log('KLOG platform: ' + e.message);
+		postMessage({ log: 'platform: ' + e.message });
+		kcall(env, K.syscall, 8, 4096);	/* pexit, no return */
+		throw new Error('platform: exits returned');
+	}
 	x = inst.exports;
 	const mem = x.memory, tbl = x.table;
 	env.user = { x, mem };
@@ -661,15 +687,17 @@ function ydin(module, mem) {
  * Worker-poolin Worker (sivun spawn): ytimen instanssi luodaan jo ennen
  * työtä, joten fork, helper tai rfork(RFMEM) ei odota sitä.  Instanssin
  * luonti ei kirjoita jaettuun muistiin (ytimen data alustetaan vain
- * boot-Workerissa, _init).  Epäonnistunut lämmitys jätetään: työ luo
- * instanssin itse ja raportoi virheen kuten ennenkin.
+ * boot-Workerissa, _init).  Tulos kuitataan sivulle ({ warm: true } tai
+ * { warm: false, why }): epäonnistunut Worker poistetaan poolista.
  */
 let lammin = null;
 function lammita({ module, mem }) {
 	try {
 		lammin = ydin(module, mem);
+		postMessage({ warm: true });
 	} catch (e) {
 		lammin = null;
+		postMessage({ warm: false, why: String(e) });
 	}
 }
 
@@ -1039,6 +1067,9 @@ function etheraddr() {
 	return ea;
 }
 
+/* tämän tiedoston sisällön tiiviste (tools/platstamp); lähdepuussa @PLATHASH@ */
+const PLATHASH = '@PLATHASH@';
+
 /*
  * Prosessien Workereiden skripti: tämä moduuli kerran Blob-URL:ksi.
  * Palvelin lähettää sivun tiedostot no-store-otsakkeella (uusi versio heti
@@ -1048,19 +1079,31 @@ function etheraddr() {
  * ladattu moduuli (levyn oma firmware, kernel.html) tai epäonnistunut
  * haku: import.meta.url kuten ennenkin.  Levyjen Workerit käyttävät yhä
  * import.meta.url:ia, koska httpdisk avaa suhteellisia osoitteita.
+ *
+ * Versio: force-cache ottaa haun tavallisesti selaimen välimuistista,
+ * mutta se ei takaa samaa tiedostoa (no-store, uusi julkaisu).  Haettu
+ * lähde hyväksytään vain, jos siinä on tämän moduulin PLATHASH; muuten
+ * käynnistys pysähtyy virheeseen (sivu ladattava uudelleen), sillä
+ * eriversioiset Workerit voisivat käyttää eri ABI:a.
  */
 async function workerurl() {
 	const me = import.meta.url;
 	if (!/^https?:/.test(me))
 		return me;
 	try {
-		const r = await fetch(me);
-		if (!r.ok)
-			return me;
-		return URL.createObjectURL(new Blob([await r.text()], { type: 'text/javascript' }));
+		let t = null;
+		for (const cache of ['force-cache', 'no-store']) {
+			const r = await fetch(me, { cache });
+			if (!r.ok)
+				return me;
+			t = await r.text();
+			if (t.includes(`const PLATHASH = '${PLATHASH}';`))
+				return URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
+		}
 	} catch (e) {
-		return me;
+		return me;	/* verkko: Workerit hakevat sen itse, kuten ennen */
 	}
+	throw new Error('platform.js on the server is not this page\'s version (a new one was published): reload the page');
 }
 
 export async function boot(url, front = {}) {
@@ -1398,12 +1441,43 @@ export async function boot(url, front = {}) {
 	 * Worker-pooli: POOLI valmiiksi käynnistettyä Workeria, joiden ydin on
 	 * jo instansioitu (role 'warm').  Proc saa poolista Workerin heti, ja
 	 * pooli täydentyy taustalla.  Boot-Worker tehdään aina erikseen.
-	 * ?pool=0 tai front.pool = 0: ei poolia, Worker per proc kuten ennen.
+	 * ?pool=0 tai front.pool = 0: ei poolia, Worker per proc kuten ennen;
+	 * enintään POOLIMAX (jokainen idle-Worker on säie ja V8-ympäristö).
+	 * Workerin lämmitys kuitataan (w.lammin); tilasto: window.plan9.pool.
 	 */
-	const POOLI = Number.isInteger(front.pool) && front.pool >= 0 ? front.pool : 2;
+	const POOLIMAX = 8;
+	const POOLI = Number.isInteger(front.pool) ? Math.min(Math.max(front.pool, 0), POOLIMAX) : 2;
 	const pooli = [];
+	/* proc-Workerit: lämmin osuma, poolista mutta lämmitys kesken, poolin ohi uusi; epäonnistuneet lämmitykset */
+	const tilasto = { lammin: 0, kesken: 0, uusi: 0, lampovirhe: 0 };
+	/*
+	 * Lämmitysvirheen jälkeen pooli täydentyy vasta tauon jälkeen: 100 ms,
+	 * kaksinkertaistuen enintään 5 s:iin, onnistunut lämmitys palauttaa
+	 * sen.  Muistipaineessa jokainen proc ei siis käynnistä uutta
+	 * epäonnistuvaa lämmityssarjaa.  Yhtäaikaisia lämmityksiä on enintään
+	 * POOLI: lämpenevät Workerit ovat poolissa.
+	 */
+	const TAUKO0 = 100, TAUKOMAX = 5000;
+	let tauko = 0, taukoviive = TAUKO0, taukoajastin = 0;
+	const lampo = (w, m) => {
+		if (m.warm) {
+			w.lammin = true;
+			taukoviive = TAUKO0;
+			return;
+		}
+		tilasto.lampovirhe++;
+		console.log('KLOG platform: a pooled Worker could not make its kernel: ' + m.why);
+		const i = pooli.indexOf(w);
+		if (i >= 0) {
+			pooli.splice(i, 1);
+			w.terminate();
+		}
+		tauko = performance.now() + taukoviive;
+		taukoviive = Math.min(taukoviive * 2, TAUKOMAX);
+	};
 	const viesti = (e) => {
 		const m = e.data;
+		if (m.warm !== undefined) { lampo(e.target, m); return; }
 		if (m.eia) { eia.push(m.eia); front.eia?.(m.eia); }
 		if (m.spawn) spawn({ module, mem, role: 'proc', ...m.spawn });
 		if (m.log !== undefined) console.log('KLOG ' + m.log);
@@ -1433,6 +1507,12 @@ export async function boot(url, front = {}) {
 		return w;
 	};
 	const tayta = () => {
+		const odota = tauko - performance.now();
+		if (odota > 0) {
+			if (!taukoajastin)
+				taukoajastin = setTimeout(() => { taukoajastin = 0; tayta(); }, odota);
+			return;
+		}
 		while (pooli.length < POOLI) {
 			let w;
 			try {
@@ -1450,6 +1530,8 @@ export async function boot(url, front = {}) {
 			return;
 		}
 		let w = job.role === 'boot' ? null : pooli.shift();
+		if (job.role !== 'boot')
+			tilasto[!w ? 'uusi' : w.lammin ? 'lammin' : 'kesken']++;
 		if (!w) {
 			try {
 				w = uusi();
@@ -1464,6 +1546,7 @@ export async function boot(url, front = {}) {
 	};
 	window.plan9 = {
 		get flushes() { return screen.flushes; },
+		get pool() { return { koko: POOLI, vapaana: pooli.length, ...tilasto }; },
 		eia0bytes: () => { const b = new Uint8Array(eia.reduce((n, c) => n + c.length, 0)); let o = 0; for (const c of eia) { b.set(c, o); o += c.length; } return b; },
 		eia0out: () => new TextDecoder().decode(window.plan9.eia0bytes()),
 		eia0b64: () => { let s = ''; for (const c of window.plan9.eia0bytes()) s += String.fromCharCode(c); return btoa(s); },
