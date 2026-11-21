@@ -1,0 +1,81 @@
+name: wasm32 process benchmark
+
+on:
+  push:
+    branches:
+      - bench/spawn-wasm32-*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            p7zip-full bubblewrap cpio meson ninja-build pkg-config \
+            libcap-dev libseccomp-dev libselinux1-dev \
+            gcc make python3 curl patch git \
+            libfontconfig1-dev libfreetype6-dev libx11-dev libxext-dev libxt-dev
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          if ! bwrap --help 2>&1 | grep -q -- '--overlay-src'; then
+            git clone --depth=1 --branch v0.11.0 https://github.com/containers/bubblewrap.git /tmp/bubblewrap
+            meson setup /tmp/bubblewrap-build /tmp/bubblewrap
+            ninja -C /tmp/bubblewrap-build
+            sudo ninja -C /tmp/bubblewrap-build install
+          fi
+          bwrap --version
+
+      - name: Install browser
+        run: |
+          curl -fLsS https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb
+          sudo apt-get install -y /tmp/chrome.deb
+          sudo ln -sf "$(command -v google-chrome)" /usr/local/bin/chromium
+          chromium --version
+
+      - name: Build plan9port
+        run: |
+          git clone --depth=1 https://github.com/9fans/plan9port.git "$HOME/plan9port"
+          cd "$HOME/plan9port"
+          ./INSTALL
+          test -x bin/mk && test -x bin/rc && test -x bin/yacc
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/plan9-wasm32
+          key: 9front-11952-amd64-iso
+
+      - name: Build and smoke-test the actual wasm32 OS
+        env:
+          PLAN9: ${{ github.workspace }}/.never-used
+        run: |
+          export PLAN9="$HOME/plan9port"
+          tools/test/run echo
+
+      - name: Run real fork and fork-exec benchmark
+        run: |
+          mkdir -p build/test
+          SITE="$PWD/build/test/site" SERIAL=1 HALTWAIT=540 \
+            ARGS='["/bin/benchspawn"]' tools/test/wasmapp benchspawn
+          grep '^BENCH ' build/test/benchspawn.txt | tee build/test/benchspawn-summary.txt
+          test "$(grep -c '^BENCH mode=' build/test/benchspawn.txt)" -eq 18
+          grep -q '^BENCH_END' build/test/benchspawn.txt
+
+      - name: Save benchmark and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan9-wasm32-spawn-benchmark
+          path: |
+            build/test/*.txt
+            build/test/*.log
+            build/native.log
+            build/test/*.png
+          if-no-files-found: warn

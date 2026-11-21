@@ -12,6 +12,7 @@ bin
 	d5	- sys sys /sys/src/9/wasm32/test/3.d5
 	fault	- sys sys /sys/src/9/wasm32/test/3.fault
 	forkloop	- sys sys /sys/src/9/wasm32/test/3.forkloop
+	benchspawn	- sys sys /sys/src/9/wasm32/test/3.benchspawn
 	hello	- sys sys /sys/src/9/wasm32/test/3.hello
 	fork	- sys sys /sys/src/9/wasm32/test/3.fork
 	dclock	- sys sys /sys/src/9/wasm32/test/3.dclock
