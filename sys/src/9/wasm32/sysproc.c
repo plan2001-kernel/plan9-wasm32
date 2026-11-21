@@ -21,6 +21,7 @@ enum
 };
 
 uintptr	sysseek(va_list);
+uintptr	sysdup(va_list);
 
 typedef struct Exec Exec;
 struct Exec
@@ -78,33 +79,36 @@ addarg(Exec *e, char *s)
 	e->argc++;
 }
 
+static void
+execfree(Exec *e)
+{
+	if(e->c != nil)
+		cclose(e->c);
+	e->c = nil;
+	free(e->img);
+	e->img = nil;
+	free(e->args);
+	e->args = nil;
+}
+
 /*
- * file the next program with argv: its module to the platform, which
- * starts it when the system call is done (or touser)
+ * file with argv as a program: its module's bytes and argv's strings in e
+ * (exec, spawn).  On an error e has what it had made: execfree
  */
 static void
-exec1(char *file, char **argv, int argc)
+execprep(Exec *e, char *file, char **argv, int argc)
 {
-	Exec e;
 	char line[256], *f[Maxshargs], *p;
 	int i, n;
 
-	memset(&e, 0, sizeof e);
-	if(waserror()){
-		if(e.c != nil)
-			cclose(e.c);
-		free(e.img);
-		free(e.args);
-		nexterror();
-	}
-	e.args = malloc(Maxargsize);
-	if(e.args == nil)
+	e->args = malloc(Maxargsize);
+	if(e->args == nil)
 		error(Enomem);
-	readimg(&e, file);
-	if(e.nimg >= 2 && e.img[0] == '#' && e.img[1] == '!'){
+	readimg(e, file);
+	if(e->nimg >= 2 && e->img[0] == '#' && e->img[1] == '!'){
 		/* #!interpreter args: it gets them, the file, argv[1] on */
-		n = e.nimg-2 < sizeof line-1 ? e.nimg-2 : sizeof line-1;
-		memmove(line, e.img+2, n);
+		n = e->nimg-2 < sizeof line-1 ? e->nimg-2 : sizeof line-1;
+		memmove(line, e->img+2, n);
 		line[n] = 0;
 		if((p = strchr(line, '\n')) == nil)
 			error(Ebadexec);
@@ -113,23 +117,41 @@ exec1(char *file, char **argv, int argc)
 		if(n == 0)
 			error(Ebadexec);
 		for(i = 0; i < n; i++)
-			addarg(&e, f[i]);
-		addarg(&e, file);
+			addarg(e, f[i]);
+		addarg(e, file);
 		for(i = 1; i < argc; i++)
-			addarg(&e, argv[i]);
-		free(e.img);
-		e.img = nil;
-		readimg(&e, f[0]);
+			addarg(e, argv[i]);
+		free(e->img);
+		e->img = nil;
+		readimg(e, f[0]);
 	}else
 		for(i = 0; i < argc; i++)
-			addarg(&e, argv[i]);
-	if(e.nimg < 8 || memcmp(e.img, "\0asm", 4) != 0)
+			addarg(e, argv[i]);
+	if(e->nimg < 8 || memcmp(e->img, "\0asm", 4) != 0)
 		error(Ebadexec);
+}
+
+/*
+ * file the next program with argv: its module to the platform, which
+ * starts it when the system call is done (or touser)
+ */
+static void
+exec1(char *file, char **argv, int argc)
+{
+	Exec e;
+	char *p;
+	int i;
+
+	memset(&e, 0, sizeof e);
+	if(waserror()){
+		execfree(&e);
+		nexterror();
+	}
+	execprep(&e, file, argv, argc);
 	if(platexec(e.img, e.nimg, e.args, e.nargs, e.argc) < 0)
 		error(Ebadexec);
 	poperror();
-	free(e.img);
-	free(e.args);
+	execfree(&e);
 
 	/* the old program is gone: its close-on-exec files, its notify */
 	for(i = 0; i <= up->fgrp->maxfd; i++)
@@ -249,21 +271,23 @@ rfmemstart(Proc *p)
 }
 
 /*
- * rfork(RFPROC): 9front's, less segments.  The child is made here, its
- * pid the result; the platform then unwinds the program, copies its
- * memory for the child and readies it (platfork), and both rewind - the
- * parent with the pid, the child with 0
+ * up:n lapsi kuten rfork(RFPROC) sen tekee: 9frontin, ilman segmenttejä.
+ * fn ajetaan ensin; fg sen tiedostokuvaajat, jos ei nil (spawnin valmiit:
+ * lapsen omat, tai suljetaan tässä, jos procia ei saada).  Pid *pidp:hen.
+ * Virhe pidin jälkeen päättää lapsen.
  */
-static uintptr
-forkproc(ulong flag)
+static Proc*
+procchild(ulong flag, void (*fn)(void), Fgrp *fg, ulong *pidp)
 {
 	static char nomntdevs[] = "|decp";
 	Proc *p;
-	Umem *u;
 	ulong pid;
 
-	if((p = newproc()) == nil)
+	if((p = newproc()) == nil){
+		if(fg != nil)
+			closefgrp(fg);
 		error("no procs");
+	}
 
 	qlock(&up->debug);
 	qlock(&p->debug);
@@ -284,7 +308,7 @@ forkproc(ulong flag)
 	p->noswap = up->noswap;
 	p->hang = up->hang;
 	p->kp = 0;
-	kprocchild(p, (flag & RFMEM) ? helper : forkuser);
+	kprocchild(p, fn);
 	kstrdup(&p->text, up->text);
 	kstrdup(&p->user, up->user);
 	kstrdup(&p->args, "");
@@ -304,7 +328,9 @@ forkproc(ulong flag)
 		ready(p);
 		nexterror();
 	}
-	if(flag & (RFFDG|RFCFDG))
+	if(fg != nil)
+		p->fgrp = fg;
+	else if(flag & (RFFDG|RFCFDG))
 		p->fgrp = dupfgrp((flag & RFFDG) ? up->fgrp : nil);
 	else{
 		p->fgrp = up->fgrp;
@@ -342,6 +368,24 @@ forkproc(ulong flag)
 		unlock(&up->exl);
 	}
 	procpriority(p, up->basepri, up->fixedpri);
+	*pidp = pid;
+	return p;
+}
+
+/*
+ * rfork(RFPROC): the child (procchild), its pid the result; the platform
+ * then unwinds the program, copies its memory for the child and readies
+ * it (platfork), and both rewind - the parent with the pid, the child
+ * with 0
+ */
+static uintptr
+forkproc(ulong flag)
+{
+	Proc *p;
+	Umem *u;
+	ulong pid;
+
+	p = procchild(flag, (flag & RFMEM) ? helper : forkuser, nil, &pid);
 	if(flag & RFMEM){
 		/*
 		 * the memory's procs: their programs on its Worker, their calls
@@ -443,6 +487,119 @@ sysrfork(va_list list)
 		qunlock(&up->debug);
 	}
 	return 0;
+}
+
+/*
+ * spawnin lapsen tiedostokuvaajat: up:n kopio (RFCFDG: tyhjä), sitten
+ * parit (from, to) järjestyksessä - from >= 0 dup(from, to), from -1
+ * sulkee to:n - ja lopuksi CCEXEC kuten exec.  9frontin sysdup ja
+ * fdclose tekevät ne, up->fgrp hetken lapsen taulu (ei yhteinen
+ * kenenkään muun kanssa: juuri tehty).
+ */
+static Fgrp*
+spawnfds(ulong flag, int *fd, int nfd)
+{
+	Fgrp *f, *ofg;
+	ulong a[2];
+	int i;
+
+	f = dupfgrp((flag & RFCFDG) ? nil : up->fgrp);
+	ofg = up->fgrp;
+	up->fgrp = f;
+	if(waserror()){
+		up->fgrp = ofg;
+		closefgrp(f);
+		nexterror();
+	}
+	for(i = 0; i+1 < nfd; i += 2){
+		if(fd[i+1] < 0)
+			error(Ebadfd);
+		if(fd[i] == -1){
+			fdclose(fd[i+1], 0);
+			continue;
+		}
+		a[0] = fd[i];
+		a[1] = fd[i+1];
+		sysdup((va_list)a);
+	}
+	for(i = 0; i <= f->maxfd; i++)
+		fdclose(i, CCEXEC);
+	poperror();
+	up->fgrp = ofg;
+	return f;
+}
+
+/*
+ * spawn(file, argv, fd, nfd, flag): file uudeksi prosessiksi ilman
+ * forkia - ei kutsujan muistin kopiota, pinon purkua eikä palautusta.
+ * Kuten rfork(RFPROC|RFFDG|flag) ja lapsen exec(file, argv), mutta
+ * ohjelma tarkistetaan ja käännetään kutsujan kutsussa: virhe (ei
+ * tiedostoa, ei ohjelma, huono kuvaaja) on kutsujan -1 eikä lasta
+ * synny.  fd: nfd sanaa, parit spawnfds:n tapaan.  flag: Spawnflags;
+ * ei RFMEM.  Tulos: lapsen pid.
+ */
+enum
+{
+	Spawnflags	= RFPROC|RFNOWAIT|RFNOTEG|RFNAMEG|RFCNAMEG|RFENVG|RFCENVG|RFREND|RFCFDG|RFNOMNT,
+};
+
+uintptr
+sysspawn(va_list list)
+{
+	char *file, **argv, *name;
+	int *fd, nfd, argc;
+	ulong flag, pid;
+	Exec e;
+	Fgrp *f;
+	Proc *p;
+
+	file = va_arg(list, char*);
+	argv = va_arg(list, char**);
+	fd = va_arg(list, int*);
+	nfd = va_arg(list, int);
+	flag = va_arg(list, ulong);
+	if((flag & ~Spawnflags) != 0 || nfd < 0 || nfd % 2 != 0)
+		error(Ebadarg);
+	if((flag & (RFNAMEG|RFCNAMEG)) == (RFNAMEG|RFCNAMEG))
+		error(Ebadarg);
+	if((flag & (RFENVG|RFCENVG)) == (RFENVG|RFCENVG))
+		error(Ebadarg);
+	for(argc = 0; argv[argc] != nil; argc++)
+		;
+
+	memset(&e, 0, sizeof e);
+	if(waserror()){
+		execfree(&e);
+		nexterror();
+	}
+	execprep(&e, file, argv, argc);
+	f = spawnfds(flag, fd, nfd);
+	p = procchild(flag, forkuser, f, &pid);	/* f on nyt lapsen */
+
+	/*
+	 * Tästä eteenpäin lapsi on olemassa mutta ei ole ajanut: mikä
+	 * tahansa virhe purkaa sen tässä yhdessä paikassa, kerran
+	 * (procunmake), ja palaa kutsujan virheeksi.  procspawn onnistuttua
+	 * lapsi on Workerillaan, eikä mikään enää voi epäonnistua.
+	 */
+	if(waserror()){
+		procunmake(p);
+		nexterror();
+	}
+	/* lapsen ohjelma: moduuli käännetään tässä, Workerin työ (platnewproc) */
+	name = strrchr(file, '/');
+	qlock(&p->debug);
+	kstrdup(&p->text, name != nil ? name+1 : file);
+	p->notify = nil;
+	qunlock(&p->debug);
+	if(platspawn(e.img, e.nimg, e.args, e.nargs, e.argc) < 0)
+		error(Ebadexec);
+	if(procspawn(p, Wfork) < 0)
+		error("spawn: the page could not make a Worker");
+	poperror();
+	poperror();
+	execfree(&e);
+	return pid;
 }
 
 uintptr

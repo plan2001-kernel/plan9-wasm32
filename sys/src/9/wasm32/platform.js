@@ -584,7 +584,7 @@ function imports(env) {
 		platnewproc: () => {
 			const user = env.forkimage;
 			env.forkimage = null;
-			env.post({ spawn: { fn: arg(0), arg: arg(1), sp: arg(2), up: arg(3), what: iarg(4), user } }, user ? [user.snap.buffer] : []);
+			env.post({ spawn: { fn: arg(0), arg: arg(1), sp: arg(2), up: arg(3), what: iarg(4), user } }, user?.snap ? [user.snap.buffer] : []);
 		},
 		platnote: () => {
 			const k = new Uint8Array(env.mem.buffer);
@@ -612,6 +612,21 @@ function imports(env) {
 			try {
 				const module = new WebAssembly.Module(k.slice(arg(0), arg(0) + iarg(1)));
 				env.exec = { module, args: k.slice(arg(2), arg(2) + iarg(3)), argc: iarg(4) };
+				env.x.retw.value = 0;
+			} catch (e) {
+				env.x.retw.value = -1;
+			}
+		},
+		/*
+		 * spawn (sysproc.c): lapsen ohjelma käännetään kutsujan Workerissa ja
+		 * annetaan seuraavan platnewproc:n mukana lapsen Workerin työksi
+		 * exec-muodossa ({ module, args, argc }: tuore ohjelma, ei muistikuvaa)
+		 */
+		platspawn: () => {
+			const k = new Uint8Array(env.mem.buffer);
+			try {
+				const module = new WebAssembly.Module(k.slice(arg(0), arg(0) + iarg(1)));
+				env.forkimage = { module, args: k.slice(arg(2), arg(2) + iarg(3)), argc: iarg(4) };
 				env.x.retw.value = 0;
 			} catch (e) {
 				env.x.retw.value = -1;
@@ -1541,7 +1556,7 @@ export async function boot(url, front = {}) {
 			}
 		}
 		w.job = job;
-		w.postMessage(job, job.user ? [job.user.snap.buffer] : []);
+		w.postMessage(job, job.user?.snap ? [job.user.snap.buffer] : []);
 		tayta();
 	};
 	window.plan9 = {

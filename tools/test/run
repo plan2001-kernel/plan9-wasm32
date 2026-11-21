@@ -8,7 +8,7 @@
 #
 # - the kernel and programs: c2a (port/'s own test, no init), bootinfo,
 #   badblob, oldheader (BootInfo: docs/boot.md), echo, long (argv past
-#   4096 bytes), fork, forkloop (2000 forks), rc, rci, c3a (notes,
+#   4096 bytes), fork, forkloop (2000 forks), spawn, spawnrc, rc, rci, c3a (notes,
 #   rendezvous), failfork (a child without a Worker), rfmem, threads,
 #   preempt, rfmemloop, failhelper, failrfmem (rfork(RFMEM) undone),
 #   init (/boot/console: kbdfs, rc, äåö, DEL), procargs, notekill, fault,
@@ -72,6 +72,10 @@ want echo $names && run echo '["/bin/echo", "hello", "world"]'
 want long $names && run long "[\"/bin/echo\", \"$(printf '%06000d' 0 | tr 0 a)\"]"
 want fork $names && run fork '["/bin/fork"]'
 want forkloop $names && HALTWAIT=400 run forkloop '["/bin/forkloop", "2000"]'
+# spawn(2): ohjelma omaksi prosessikseen ilman forkia; virheet kutsujalle, ei lasta
+want spawn $names && HALTWAIT=120 run spawn '["/bin/spawn"]'
+# spawn rc:ssä: uudelleenohjaukset, paikallinen ympäristö, virheet; sama tuloste kuin forkilla
+want spawnrc $names && run spawnrc '["/bin/rc", "-c", "rc /bin/spawnrc.rc; echo done"]'
 want rc $names && run rc '["/bin/rc", "-c", "echo hello from rc; x=(a b c); echo $#x; ls /bin/echo /bin/rc | wc -l; cat /rc/lib/rcmain | wc -l; echo done"]'
 # rc's compiled code is a union of function pointers, ints and strings, and rc tells them apart by the
 # functions' addresses: a function's address never a small number (3l: TEXTBASE), or rc misreads its code

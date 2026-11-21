@@ -1,0 +1,28 @@
+# spawn(2) rc:ssä (simple.c execspawn): yksinkertaiset komennot
+# uudelleenohjauksineen, paikallinen ympäristö, työhakemisto, virheet.
+# Odotettu tuloste (spawnrc.out) on sama kuin pelkällä forkilla (vanha rc).
+ramfs -m /tmp
+cd /tmp
+/bin/echo one >a
+/bin/echo two >>a
+/bin/cat <a
+/bin/cat a /nonexistent >b >[2=1]
+/bin/wc -l <b
+/bin/cat /nonexistent >[2]c
+/bin/wc -l <c
+/bin/echo to-stderr >[1=2] >[2]d
+/bin/cat d
+{/bin/echo x; /bin/echo y >[1=2]} >e >[2]f
+/bin/cat e f
+/bin/echo closed >[1=]
+echo closed: $#status
+x=local /bin/rc -c 'echo x is $x'
+echo x after: $#x
+/bin/pwd
+/bin/nonexistent
+echo nonexistent: $#status
+for(i in 1 2 3) { /bin/echo $i >[1]g$i }
+/bin/cat g1 g2 g3
+/bin/sleep 0 &
+wait
+echo waited

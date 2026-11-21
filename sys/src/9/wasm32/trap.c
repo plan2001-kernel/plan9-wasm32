@@ -44,7 +44,7 @@ Syscall	sysbind, syschdir, sysclose, sysdup, sysalarm, sysexec, sysexits,
 	sysfauth, sysopen, syssleep, sysrfork, syspipe, syscreate, sysfd2path,
 	sysbrk_, sysremove, sysnotify, sysnoted, sysunmount, sysfversion,
 	syserrstr, sysstat, sysfstat, syswstat, sysfwstat, sysmount, sysawait,
-	syspread, syspwrite, sysrendezvous, sysyield;
+	syspread, syspwrite, sysrendezvous, sysyield, sysspawn;
 vlong	sysseekv(va_list);
 vlong	sysnsecv(va_list);
 
@@ -91,6 +91,7 @@ static Sys systab[] =
 [_NSEC]		nil, sysnsecv, "",
 [RENDEZVOUS]	sysrendezvous, nil, "ii",
 [YIELD]		sysyield, nil, "",
+[SPAWN]		sysspawn, nil, "sAFi",
 };
 
 typedef struct Call Call;
@@ -119,7 +120,7 @@ nwords(char *a)
 	int n;
 
 	for(n = 0; *a != 0; a++)
-		n += (*a == 'v' || *a == 'r' || *a == 'w' || *a == 'W') ? 2 : 1;
+		n += (*a == 'v' || *a == 'r' || *a == 'w' || *a == 'W' || *a == 'F') ? 2 : 1;
 	return n;
 }
 
@@ -231,6 +232,14 @@ marshal(Call *c, char *a)
 		case 'A':
 			c->k[i] = (ulong)callargv(c, c->u[i]);
 			i++;
+			break;
+		case 'F':
+			/* int-taulukko ja sen pituus sanoina (spawnin kuvaajaparit), vain sisään */
+			if(c->u[i+1] > Maxargv)
+				error(Etoobig);
+			c->k[i] = (ulong)callbuf(c, c->u[i], c->u[i+1]*sizeof(int), 1, 0, 0);
+			c->k[i+1] = c->u[i+1];
+			i += 2;
 			break;
 		}
 	}

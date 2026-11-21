@@ -12,6 +12,7 @@ bin
 	d5	- sys sys /sys/src/9/wasm32/test/3.d5
 	fault	- sys sys /sys/src/9/wasm32/test/3.fault
 	forkloop	- sys sys /sys/src/9/wasm32/test/3.forkloop
+	spawn	- sys sys /sys/src/9/wasm32/test/3.spawn
 	hello	- sys sys /sys/src/9/wasm32/test/3.hello
 	fork	- sys sys /sys/src/9/wasm32/test/3.fork
 	dclock	- sys sys /sys/src/9/wasm32/test/3.dclock
@@ -29,6 +30,7 @@ bin
 		listen1	- sys sys /wasm32/bin/aux/listen1
 		dial	- sys sys /wasm32/bin/aux/dial
 	rcif.rc	- sys sys /sys/src/9/wasm32/test/rcif.rc
+	spawnrc.rc	- sys sys /sys/src/9/wasm32/test/spawnrc.rc
 lib
 	ndb
 		local	- sys sys /sys/src/9/wasm32/test/ndb.local

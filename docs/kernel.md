@@ -43,6 +43,17 @@ page boots it as firmware boots a PC's kernel (`docs/boot.md`).
 - fork: 3l's unwind and rewind of the stack (`docs/wasm32.md`); the
   kernel copies the memory for the child's Worker.  rfork(RFMEM) shares
   it: the child's Worker gets the same Memory.
+- spawn(file, argv, fd, nfd, flag) (system call 54, `sysproc.c`): a
+  program a proc of its own without fork - no copy of the caller's
+  memory, no unwind or rewind.  As rfork(RFPROC|RFFDG|flag) and the
+  child's exec(file, argv), but the program is read and compiled in the
+  caller's call, so its error (no file, not a program, a bad fd) is the
+  caller's -1 and there is no child.  fd: nfd words, pairs (from, to)
+  done in order on the child's copy of the caller's fds - from >= 0
+  dup(from, to), from -1 closes to - then exec's close-on-exec.  flag:
+  RFNOWAIT, RFNOTEG, RFNAMEG, RFCNAMEG, RFENVG, RFCENVG, RFREND, RFCFDG,
+  RFNOMNT; not RFMEM.  rc runs a simple command with it (its redirections
+  as the pairs), and forks if spawn fails, as before.
 
 ## Devices
 
