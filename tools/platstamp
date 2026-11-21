@@ -1,8 +1,9 @@
 #!/bin/bash
-# platform.js SRC:stä DST:hen, sen sisällön tiiviste (sha256, 16 heksaa)
-# merkin @PLATHASH@ paikalle: Workereiden lähde tarkistetaan sitä vasten
-# (platform.js: workerurl), ettei sivu ja Workerit ole eri versioita.
+# Stamp a built platform.js with the full SHA-256 of its unstamped source.
+# Replace ONLY the declaration, not placeholder strings in the code/comments.
 #   tools/platstamp SRC DST
 set -e
-h=$(sha256sum "$1" | cut -c1-16)
-sed "s|@PLATHASH@|$h|" "$1" >"$2"
+grep -qx "const PLATHASH = '@PLATHASH@';" "$1" || { echo 'platstamp: unstamped declaration missing' >&2; exit 1; }
+h=$(sha256sum "$1")
+h=${h%% *}
+sed "s|^const PLATHASH = '@PLATHASH@';$|const PLATHASH = '$h';|" "$1" >"$2"

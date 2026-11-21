@@ -1,0 +1,21 @@
+name: WASM32 Worker source integrity
+
+on:
+  pull_request:
+    paths:
+      - 'sys/src/9/wasm32/platform.js'
+      - 'tools/platstamp'
+      - 'tools/test/workerurl.mjs'
+      - '.github/workflows/workerurl.yml'
+  workflow_dispatch:
+
+jobs:
+  workerurl:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify platform.js stamp and Worker source validation
+        run: node tools/test/workerurl.mjs

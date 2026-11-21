@@ -1091,34 +1091,49 @@ const PLATHASH = '@PLATHASH@';
  * käyttöön), jolloin jokainen new Worker(import.meta.url) haki ja jäsensi
  * platform.js:n uudelleen: noin 40 ms jokaisessa forkissa.  Blob-URL:sta
  * jokainen Worker saa sivun oman version ilman verkkoa.  Jo Blob-URL:sta
- * ladattu moduuli (levyn oma firmware, kernel.html) tai epäonnistunut
- * haku: import.meta.url kuten ennenkin.  Levyjen Workerit käyttävät yhä
- * import.meta.url:ia, koska httpdisk avaa suhteellisia osoitteita.
- *
- * Versio: force-cache ottaa haun tavallisesti selaimen välimuistista,
- * mutta se ei takaa samaa tiedostoa (no-store, uusi julkaisu).  Haettu
- * lähde hyväksytään vain, jos siinä on tämän moduulin PLATHASH; muuten
- * käynnistys pysähtyy virheeseen (sivu ladattava uudelleen), sillä
- * eriversioiset Workerit voisivat käyttää eri ABI:a.
+ * ladattu moduuli (levyn oma firmware, kernel.html) käyttää omaa Blob-URL:iaan.
+ * Levy-Workerit käyttävät yhä import.meta.url:ia, sillä httpdiskin URL:t
+ * ovat suhteellisia.  HTTP-lähteellä haettu tiedosto varmennetaan kokonaan:
+ * SHA-256 lasketaan uudelleen ilman tools/platstamp:n lisäämää leimaa.
+ * Poikkeustilanteessa (HTTP-virhe, uusi versio, muuttunut sisältö)
+ * käynnistys keskeytetään; tarkistamatonta Workeria ei luoda.
  */
 async function workerurl() {
 	const me = import.meta.url;
 	if (!/^https?:/.test(me))
-		return me;
-	try {
-		let t = null;
-		for (const cache of ['force-cache', 'no-store']) {
+		return me;	/* the disk's already-loaded Blob firmware */
+	if (!/^[0-9a-f]{64}$/.test(PLATHASH))
+		throw new Error('platform.js is not SHA-256 stamped: build it with tools/platstamp');
+	let reason = 'the source was unavailable';
+	for (const cache of ['force-cache', 'no-store']) {
+		try {
 			const r = await fetch(me, { cache });
-			if (!r.ok)
-				return me;
-			t = await r.text();
-			if (t.includes(`const PLATHASH = '${PLATHASH}';`))
-				return URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
+			if (!r.ok) {
+				reason = 'HTTP ' + r.status;
+				continue;
+			}
+			const t = await r.text();
+			const stamped = `const PLATHASH = '${PLATHASH}';`;
+			if (!t.includes(stamped)) {
+				reason = 'the module version changed';
+				continue;
+			}
+			/* Hash the entire downloaded source, with only its stamp restored.
+			 * tools/platstamp computes SHA-256 on precisely this source. */
+			const original = t.replace(stamped, "const PLATHASH = '@PLATHASH@';");
+			const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(original));
+			const actual = [...new Uint8Array(digest)].map(v => v.toString(16).padStart(2, '0')).join('');
+			if (actual !== PLATHASH) {
+				reason = 'SHA-256 mismatch in the downloaded source';
+				continue;
+			}
+			return URL.createObjectURL(new Blob([t], { type: 'text/javascript' }));
+		} catch (e) {
+			reason = String(e);
 		}
-	} catch (e) {
-		return me;	/* verkko: Workerit hakevat sen itse, kuten ennen */
 	}
-	throw new Error('platform.js on the server is not this page\'s version (a new one was published): reload the page');
+	/* Never fall back to an unchecked URL: its Worker could use a different ABI. */
+	throw new Error('platform.js Worker source could not be verified (' + reason + '): reload the page');
 }
 
 export async function boot(url, front = {}) {

@@ -27,9 +27,11 @@ page boots it as firmware boots a PC's kernel (`docs/boot.md`).
   failed warming the pool fills again only after a pause (100 ms,
   doubling to 5 s).  Proc Workers start from a Blob of `platform.js`,
   made once: none fetches it again.  The build stamps the file's hash in
-  it (`tools/platstamp`), and the Blob's source must carry the page's
-  own: a different one (a version published since) stops the boot with
-  an error, never Workers of two versions.
+  it (`tools/platstamp`), and the Blob's source must match the page's
+  full SHA-256: the fetched source is rehashed after restoring its stamp
+  placeholder. An HTTP failure, content change or version mismatch fails
+  closed with a reload error; no unchecked Worker URL is used.
+  The disk firmware's Blob URL keeps its existing self-contained behavior.
 - Each program's memory is a WebAssembly.Memory of its own, and a tab
   has room for only so many (about 55-65 procs at once in Chromium): a
   program the browser cannot give memory ends with `sys: no memory for
