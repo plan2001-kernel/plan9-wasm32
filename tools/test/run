@@ -122,7 +122,7 @@ want touchui $names && TOUCH=1 EXPECT=$t/touchbar.out EXPECTJS='window.touchok =
 # below assert both.
 want riotouch $names && TOUCH=1 HALTWAIT=120 EXPECT=$t/riotouch.out \
 	EXPECTJS="$(cat "$here/riotouch.check")" EVAL="$(cat "$here/riotouch.js")" \
-	run riotouch '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; rm -f /tmp/riotest; riotest=1 rio -i '"'"'window -r -10 0 390 300 rc'"'"' >[2]/dev/null & sleep 45; echo BEGIN; cat /tmp/riotest; echo END"]'
+	run riotouch '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; ramfs; rm -f /tmp/riotest; riotest=1 rio -i '"'"'window -r -10 0 390 300 rc'"'"' >[2]/dev/null & sleep 45; echo BEGIN; cat /tmp/riotest; echo END"]'
 want paste $names && HALTWAIT=150 EVAL='setTimeout(() => { window.kernelpaste(("x".repeat(199) + "\r\n").repeat(100)); setTimeout(() => window.plan9.kbd("c\x04\0"), 40000); }, 4000)' \
 	run paste '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; wc -c </dev/cons >/dev/eia0; echo pasted"]'
 want crypto $names && run crypto '["/bin/d3"]'
