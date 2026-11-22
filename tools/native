@@ -39,19 +39,6 @@ if len(matches) != 1:
     raise SystemExit('native: expected one syscall enumeration: %r' % matches)
 lines[matches[0]] = '\t' + "SYS=`{sed -n 's/^#define[ \t][ \t]*//p' sys.h | sed 's/[ \t].*//' | grep -v '^_X[123]$'}" + '\n'
 s = ''.join(lines)
-# Generate wasm32 wrappers against the syscall number macros rather than
-# interpolating a sometimes-empty GNU sed result inside rc's quoted strings.
-# This is host-build-only; the checked-in 9front patch stays unchanged.
-old = "echo 'typedef long long vlong;'"
-new = "echo '#include \"sys.h\"'\n\t\t\t\techo 'typedef long long vlong;'"
-if s.count(old) != 1:
-    raise SystemExit('native: unexpected wasm32 syscall generator header')
-s = s.replace(old, new)
-old = "echo '\treturn _trap('$n', &a);'"
-new = "echo '\treturn _trap('$I', &a);'"
-if s.count(old) != 1:
-    raise SystemExit('native: unexpected wasm32 syscall generator body')
-s = s.replace(old, new)
 open(p, 'w').write(s)
 PY
 fi
