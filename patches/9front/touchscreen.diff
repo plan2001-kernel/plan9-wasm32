@@ -1,0 +1,658 @@
+--- a/sys/src/9/port/devmouse.c
++++ b/sys/src/9/port/devmouse.c
+@@ -297,8 +297,9 @@
+ 		}
+ 
+ 		b = buttonmap[m.buttons&7];
+-		/* put buttons 4 and 5 back in */
+-		b |= m.buttons & (3<<3);
++		/* put buttons 4 and 5 back in; keep the touch metadata
++		 * (Touchbit/Menureq/Longreq/Touchstart, platform.js) for rio too */
++		b |= m.buttons & ((3<<3)|(1<<6)|(1<<7)|(1<<17)|(1<<18));
+ 
+ 		if (scrollswap)
+ 			if (b == 8)
+--- a/sys/src/cmd/rio/rio.c
++++ b/sys/src/cmd/rio/rio.c
+@@ -31,6 +31,29 @@
+ Image*	bandsize(Window*);
+ Image*	drag(Window*);
+ void		resized(void);
++
++/*
++ * platform.js's touch bits (the page's mouse ring): TOUCH on every finger
++ * event, MENUREQ on a tap (Rio's persistent button 3 menu on the gray
++ * desktop), LONGREQ on a long press (its persistent button 2 menu).  They
++ * survive /dev/mouse (devmouse.c) and never reach a window: mousethread
++ * strips them.
++ */
++enum {
++	Touchbit	= 1<<6,
++	Menureq		= 1<<7,
++	Longreq		= 1<<17,
++	Touchmeta	= Touchbit|Menureq|Longreq,
++	Touchall	= Touchmeta|Touchstart,
++};
++
++static int	touchgesture;	/* this mouse event came from a finger */
++static int	touchoperation;	/* a touch menu wants a follow-up gesture */
++static int	touchsuppress;	/* the follow-up's MENUREQ is not another menu */
++static int	touchmenureqskip;	/* the tap that selected a touch menu's MENUREQ */
++static ulong	touchmenureqms;	/* when that menu closed (mouse msec) */
++static void	touchmenurequest(void);
++static void	touchlongrequest(void);
+ Channel	*exitchan;	/* chan(int) */
+ Channel	*winclosechan; /* chan(Window*); */
+ Channel	*kbdchan;	/* chan(char*); */
+@@ -543,6 +566,27 @@
+ 			resized();
+ 			break;
+ 		case MMouse:
++			if(mouse->buttons & Longreq){
++				touchgesture = 0;
++				touchlongrequest();
++				break;
++			}
++			if(mouse->buttons & Menureq){
++				touchgesture = 0;
++				if(touchmenureqskip && mouse->msec - touchmenureqms < 250)
++					touchmenureqskip = 0;	/* the tap that selected a touch menu */
++				else{
++					touchmenureqskip = 0;
++					touchmenurequest();
++				}
++				break;
++			}
++			touchgesture = (mouse->buttons & Touchbit) != 0;
++			mouse->buttons &= ~Touchmeta;
++			if(!touchgesture && (mouse->buttons & (7|8|16)))
++				touchmenureqskip = 0;	/* a physical click dismissed it */
++			if(touchgesture && (mouse->buttons & 7))
++				touchsuppress = 0;	/* a new gesture, not the action's wake */
+ 			if(wkeyboard!=nil && (mouse->buttons & (1<<5))){
+ 				keyboardhide();
+ 				break;
+@@ -602,6 +646,8 @@
+ 					wsendctlmesg(winput, Reshaped, i->r, i);
+ 				}
+ 				wclose(winput);
++				if(touchgesture)
++					touchsuppress = 1;
+ 				continue;
+ 			}
+ 			w = wpointto(mouse->xy);
+@@ -618,11 +664,11 @@
+ 					}else if(mouse->buttons & 2){
+ 						if(winput && !winput->deleted && !winput->mouseopen){
+ 							incref(winput);
+-							button2menu(winput);
++							button2menu(winput, 0);
+ 							wclose(winput);
+ 						}
+ 					}else if(mouse->buttons & 4)
+-						button3menu();
++						button3menu(0);
+ 				}else{
+ 					/* if button 1 event in the window, top the window and wait for button up. */
+ 					/* otherwise, top the window and pass the event on */
+@@ -634,9 +680,10 @@
+ 			break;
+ 
+ 		Drain:
+-			do
++			do{
+ 				readmouse(mousectl);
+-			while(mousectl->buttons);
++				mousectl->Mouse.buttons &= ~Touchall;
++			}while(mousectl->buttons & (7|8|16));
+ 			goto Again;	/* recalculate mouse position, cursor */
+ 		}
+ }
+@@ -754,10 +801,140 @@
+ 	return estrdup(buf);
+ }
+ 
++/*
++ * A persistent touch menu: genmenuhit() draws and tracks Rio's ordinary
++ * menu, but its readmouse callback holds the menu open after the opening
++ * touch and waits for the next, independent tap.  The physical button is
++ * not held; the synthetic button state exists only in TouchMenu.m.
++ */
++typedef struct TouchMenu TouchMenu;
++struct TouchMenu {
++	Mouse	m;		/* first: genmenuhit's Mouse* */
++	Mousectl	*mc;
++	int	but;
++	int	phase;		/* 0 waiting for the selecting tap, 1 held, 2 released */
++	int	touched;	/* the selecting tap came from a finger */
++};
++
++extern int genmenuhit(int, Mouse*, void (*)(Mouse*), void (*)(Mouse*, Point), Menu*, Screen*);
++
++static void
++touchmoveto(Mouse *m, Point pt)
++{
++	m->xy = pt;	/* never warp the real pointer */
++}
++
++static void
++touchread(Mouse *m)
++{
++	TouchMenu *t = (TouchMenu*)m;
++	int b, rb;
++
++	b = 1<<(t->but-1);
++	for(;;){
++		if(readmouse(t->mc) < 0){
++			m->buttons = 0;
++			t->phase = 2;
++			return;
++		}
++		rb = t->mc->Mouse.buttons;
++		m->xy = t->mc->Mouse.xy;
++		m->msec = t->mc->Mouse.msec;
++		/* Rio's other input paths see only the real buttons */
++		t->mc->Mouse.buttons &= ~Touchall;
++		if(t->phase == 0){
++			if(rb & 1){
++				t->phase = 1;
++				t->touched = (rb & Touchbit) != 0;
++				m->buttons = b;
++				return;
++			}
++			if(rb & (2|4|8|16)){	/* a physical menu button: dismiss */
++				t->phase = 2;
++				m->buttons = 0;
++				return;
++			}
++			continue;	/* a move or a stray event */
++		}
++		if(rb & (Menureq|Longreq))
++			continue;	/* a message from this same gesture, not its release */
++		if(rb & 1){
++			m->buttons = b;
++			return;
++		}
++		t->phase = 2;
++		m->buttons = 0;
++		return;
++	}
++}
++
++static int
++touchmenuhit(int but, Mousectl *mc, Menu *menu, Screen *scr)
++{
++	TouchMenu t;
++	int i;
++
++	memset(&t, 0, sizeof t);
++	t.mc = mc;
++	t.but = but;
++	t.m.xy = mouse->xy;
++	t.m.buttons = 1<<(but-1);	/* genmenuhit's entry: the menu is up */
++	i = genmenuhit(but, &t.m, touchread, touchmoveto, menu, scr);
++	/*
++	 * The tap that selected this menu is followed by the page's MENUREQ;
++	 * it is that tap's, not a request for another menu.  A physical
++	 * selection sends no MENUREQ.
++	 */
++	if(t.touched){
++		touchmenureqskip = 1;
++		touchmenureqms = mc->msec;
++	}
++	return i;
++}
++
++/*
++ * A tap: MENUREQ.  On the gray desktop it opens Rio's persistent button 3
++ * menu; in a window it does nothing, so an ordinary tap is only Rio's
++ * button 1 click.  The hit test is Rio's own (wpointto), not a guess from
++ * the page's pixels.
++ */
++static void
++touchmenurequest(void)
++{
++	if(touchsuppress)
++		return;	/* a window action's gesture; a new low button clears it */
++	if((mouse->buttons & (7|8|16)) || menuing || sweeping)
++		return;
++	if(wpointto(mouse->xy) == nil)
++		button3menu(1);
++}
++
++/*
++ * A long press: LONGREQ.  It opens Rio's persistent button 2 menu on the
++ * text window under the finger.  The window hit test and menu are Rio's;
++ * the page has not sent a button 1 click for this gesture.
++ */
++static void
++touchlongrequest(void)
++{
++	Window *w;
++
++	if((mouse->buttons & (7|8|16)) || menuing || sweeping)
++		return;
++	w = wpointto(mouse->xy);
++	if(w == nil || w == wkeyboard || w->deleted || w->i == nil || w->mouseopen)
++		return;	/* the desktop, the keyboard, or an application's mouse */
++	if(inborder(w->screenr, mouse->xy))
++		return;	/* a border drag/resize, not a text menu */
++	incref(w);
++	button2menu(w, 1);
++	wclose(w);
++}
++
+ void
+-button3menu(void)
++button3menu(int touch)
+ {
+-	int i, j, n;
++	int i, j, n, follow;
+ 
+ 	n = nhidden;
+ 	for(i=0; i<nwindow; i++){
+@@ -781,43 +958,55 @@
+ 		free(menu3str[i]);
+ 		menu3str[i] = nil;
+ 	}
++	follow = 0;
+ 	sweeping = TRUE;
+-	switch(i = menuhit(3, mousectl, &menu3, wscreen)){
++	touchoperation = touch;
++	switch(i = touch ? touchmenuhit(3, mousectl, &menu3, wscreen) : menuhit(3, mousectl, &menu3, wscreen)){
+ 	case -1:
+ 		break;
+ 	case New:
++		follow = 1;
+ 		new(sweep(), FALSE, scrolling, 0, nil, "/bin/rc", nil);
+ 		break;
+ 	case Reshape:
++		follow = 1;
+ 		resize();
+ 		break;
+ 	case Move:
++		follow = 1;
+ 		move();
+ 		break;
+ 	case Delete:
++		follow = 1;
+ 		delete();
+ 		break;
+ 	case Hide:
++		follow = 1;
+ 		hide();
+ 		break;
+ 	case Exit:
++		follow = 1;
+ 		confirmexit();
+ 		break;
+ 	default:
++		follow = 1;
+ 		unhide(i);
+ 		break;
+ 	}
++	touchoperation = 0;
++	if(touch && follow)
++		touchsuppress = 1;
+ 	sweeping = FALSE;
+ }
+ 
+ void
+-button2menu(Window *w)
++button2menu(Window *w, int touch)
+ {
+ 	if(w->scrolling)
+ 		menu2str[Scroll] = "noscroll";
+ 	else
+ 		menu2str[Scroll] = "scroll";
+-	switch(menuhit(2, mousectl, &menu2, wscreen)){
++	switch(touch ? touchmenuhit(2, mousectl, &menu2, wscreen) : menuhit(2, mousectl, &menu2, wscreen)){
+ 	case Cut:
+ 		wsnarf(w);
+ 		wcut(w);
+@@ -865,6 +1054,21 @@
+ 	return p;
+ }
+ 
++/* the mouse a menu's follow-up gesture reads: no touch metadata */
++static void
++readclearmouse(void)
++{
++	readmouse(mousectl);
++	mouse->buttons &= ~Touchall;
++}
++
++/* Rio's window actions want button 3; a touch gesture is button 1 */
++static int
++actionbutton(void)
++{
++	return touchoperation ? (4|1) : 4;
++}
++
+ Image*
+ sweep(void)
+ {
+@@ -876,13 +1080,13 @@
+ 	menuing = TRUE;
+ 	riosetcursor(&crosscursor);
+ 	while(mouse->buttons == 0)
+-		readmouse(mousectl);
++		readclearmouse();
+ 	p0 = onscreen(mouse->xy);
+ 	p = p0;
+ 	r.min = p;
+ 	r.max = p;
+ 	oi = nil;
+-	while(mouse->buttons == 4){
++	while(mouse->buttons & actionbutton()){
+ 		if(!eqpt(mouse->xy, p)){
+ 			p = onscreen(mouse->xy);
+ 			r = canonrect(Rpt(p0, p));
+@@ -897,7 +1101,7 @@
+ 				draw(i, insetrect(r, Selborder), cols[BACK], nil, ZP);
+ 			}
+ 		}
+-		readmouse(mousectl);
++		readclearmouse();
+ 	}
+ 	if(mouse->buttons != 0)
+ 		goto Rescue;
+@@ -917,7 +1121,7 @@
+ 	i = nil;
+ 	flushimage(display, 1);
+ 	while(mouse->buttons)
+-		readmouse(mousectl);
++		readclearmouse();
+ 
+  Return:
+ 	menuing = FALSE;
+@@ -972,13 +1176,13 @@
+ 	d = subpt(w->screenr.max, w->screenr.min);
+ 	op = subpt(om, dm);
+ 	drawborder(Rect(op.x, op.y, op.x+d.x, op.y+d.y), sizecol);
+-	while(mouse->buttons==4){
++	while(mouse->buttons & actionbutton()){
+ 		p = subpt(mouse->xy, dm);
+ 		if(!eqpt(p, op)){
+ 			drawborder(Rect(p.x, p.y, p.x+d.x, p.y+d.y), sizecol);
+ 			op = p;
+ 		}
+-		readmouse(mousectl);
++		readclearmouse();
+ 	}
+ 	r = Rect(op.x, op.y, op.x+d.x, op.y+d.y);
+ 	drawborder(r, nil);
+@@ -988,7 +1192,7 @@
+ 	if(mouse->buttons!=0 || !goodrect(r) || eqrect(r, w->screenr)){
+ 		flushimage(display, 1);
+ 		while(mouse->buttons)
+-			readmouse(mousectl);
++			readclearmouse();
+ 		return nil;
+ 	}
+ 	return allocwindow(wscreen, r, Refbackup, DNofill);
+@@ -1018,7 +1222,7 @@
+ 			drawborder(r, sizecol);
+ 			or = r;
+ 		}
+-		readmouse(mousectl);
++		readclearmouse();
+ 	}
+ 	drawborder(or, nil);
+ 	if(!goodrect(or))
+@@ -1027,7 +1231,7 @@
+ 	|| abs(p.x-startp.x)+abs(p.y-startp.y) <= 1){
+ 		flushimage(display, 1);
+ 		while(mouse->buttons)
+-			readmouse(mousectl);
++			readclearmouse();
+ 		return nil;
+ 	}
+ 	return allocwindow(wscreen, or, Refbackup, DNofill);
+@@ -1037,22 +1241,24 @@
+ pointto(int wait)
+ {
+ 	Window *w;
++	int b;
+ 
++	b = actionbutton();
+ 	menuing = TRUE;
+ 	riosetcursor(&sightcursor);
+ 	while(mouse->buttons == 0)
+-		readmouse(mousectl);
+-	if(mouse->buttons == 4)
++		readclearmouse();
++	if(mouse->buttons & b)
+ 		w = wpointto(mouse->xy);
+ 	else
+ 		w = nil;
+ 	if(wait){
+ 		while(mouse->buttons){
+-			if(mouse->buttons!=4 && w !=nil){	/* cancel */
++			if(!(mouse->buttons & b) && w !=nil){	/* cancel */
+ 				riosetcursor(nil);
+ 				w = nil;
+ 			}
+-			readmouse(mousectl);
++			readclearmouse();
+ 		}
+ 		if(w != nil && wpointto(mouse->xy) != w)
+ 			w = nil;
+@@ -1075,16 +1281,19 @@
+ void
+ confirmexit(void)
+ {
++	int b;
++
++	b = actionbutton();
+ 	menuing = TRUE;
+ 	riosetcursor(&skull);
+ 	while(mouse->buttons == 0)
+-		readmouse(mousectl);
+-	if(mouse->buttons != 4)
++		readclearmouse();
++	if(!(mouse->buttons & b))
+ 		goto Nope;
+ 	while(mouse->buttons){
+-		if(mouse->buttons != 4)
++		if(!(mouse->buttons & b))
+ 			goto Nope;
+-		readmouse(mousectl);
++		readclearmouse();
+ 	}
+ 	send(exitchan, nil);
+ Nope:
+--- a/sys/src/cmd/rio/fns.h
++++ b/sys/src/cmd/rio/fns.h
+@@ -20,8 +20,8 @@
+ void	*erealloc(void*, uint);
+ void *emalloc(uint);
+ char *estrdup(char*);
+-void	button3menu(void);
+-void	button2menu(Window*);
++void	button3menu(int);
++void	button2menu(Window*, int);
+ void	cvttorunes(char*, int, Rune*, int*, int*, int*);
+ /* was (byte*,int)	runetobyte(Rune*, int); */
+ char* runetobyte(Rune*, int, int*);
+@@ -31,6 +31,11 @@
+ int	goodrect(Rectangle);
+ int	inborder(Rectangle, Point);
+ 
++/* platform.js's first button 1 down of a finger gesture (rio.c's touch bits) */
++enum {
++	Touchstart	= 1<<18,
++};
++
+ #define	runemalloc(n)		malloc((n)*sizeof(Rune))
+ #define	runerealloc(a, n)	realloc(a, (n)*sizeof(Rune))
+ #define	runemove(a, b, n)	memmove(a, b, (n)*sizeof(Rune))
+--- a/sys/src/cmd/rio/wind.c
++++ b/sys/src/cmd/rio/wind.c
+@@ -1086,13 +1086,92 @@
+ 	return (mode == 1) ? isalnum(r) : r && !isspace(r);
+ }
+ 
++/*
++ * Is p in the empty margin left or right of the text on its line?
++ * A touch double click there must not stretch into a word on the
++ * line: the line's shell prompt is not part of its body text.
++ */
++static int
++inmargin(Window *w, Point p)
++{
++	Point pt, pe;
++	ulong a, b;
++
++	if(w->nr == 0)
++		return 1;
++	/* the first and last characters of the visual line at p */
++	a = frcharofpt(w, Pt(w->Frame.r.min.x, p.y));
++	b = frcharofpt(w, Pt(w->Frame.r.max.x, p.y));
++	pt = frptofchar(w, a);
++	if(p.y < pt.y || p.y >= pt.y + w->font->height)
++		return 1;	/* above or below the text */
++	pe = frptofchar(w, b);
++	if(pe.y > pt.y){
++		/* b is on the next line: a newline or a wrapped line */
++		if(b > 0 && w->org+b-1 < w->nr && w->r[w->org+b-1] == '\n')
++			pe = frptofchar(w, b-1);	/* the newline: the line's end */
++		else
++			pe.x = w->Frame.r.max.x;	/* the wrapped line's right edge */
++	}
++	return p.x < pt.x || p.x >= pe.x;
++}
++
++/*
++ * Is the click on a blank (space or tab) between words?  The prompt's
++ * trailing space is visually empty, so a touch double click there is
++ * not a word selection either.
++ */
++static int
++onblank(Window *w, Point p, ulong q)
++{
++	Point pt, pe;
++	Rune r;
++
++	if(w->nr == 0)
++		return 1;
++	if(q > w->nr)
++		q = w->nr;
++	if(q == w->nr)
++		q = w->nr-1;
++	pt = frptofchar(w, q);
++	if(p.y < pt.y)
++		return 1;	/* after the line above */
++	if(p.y >= pt.y + w->font->height)
++		return 0;	/* another line */
++	if(p.x < pt.x){
++		if(q == 0)
++			return 0;	/* the left margin (inmargin) */
++		q--;
++		pt = frptofchar(w, q);
++		pe = frptofchar(w, q+1);
++	}else
++		pe = frptofchar(w, q+1);
++	if(p.x < pt.x || p.x >= pe.x)
++		return 0;
++	r = w->r[w->org+q];
++	if(r == '\n')
++		return 1;
++	return isspace(r);
++}
++
++static int
++notword(Window *w, Point p, ulong q)
++{
++	return inmargin(w, p) || onblank(w, p, q);
++}
++
+ static void
+-wstretchsel(Window *w, uint pt, uint *q0, uint *q1, int mode)
++wstretchsel(Window *w, uint pt, uint *q0, uint *q1, int mode, int nofill)
+ {
+ 	int c, i, rc, lc;
+ 	Rune *r, *l, *p;
+ 	uint q;
+ 
++	if(nofill){
++		*q0 = pt;
++		*q1 = pt;
++		return;
++	}
+ 	if(mode){
+ 		lc = *q0 > 0     ? w->r[*q0-1] : '\n';
+ 		rc = *q1 < w->nr ? w->r[*q1]   : '\n';
+@@ -1150,7 +1229,7 @@
+ }
+ 
+ static void
+-wselect(Window *w)
++wselect(Window *w, int touch)
+ {
+ 	uint q0, q1;
+ 	int b, x, y, dx, dy, mode, first;
+@@ -1172,7 +1251,7 @@
+ 		clickcount = 0;
+ 	if(clickwin == w && clickcount >= 1 && w->mc.msec-clickmsec < 500){
+ 		mode = (clickcount > 2) ? 2 : clickcount;
+-		wstretchsel(w, selectq, &q0, &q1, mode);
++		wstretchsel(w, selectq, &q0, &q1, mode, touch && notword(w, w->mc.xy, selectq));
+ 		wsetselect(w, q0, q1);
+ 		x = w->mc.xy.x;
+ 		y = w->mc.xy.y;
+@@ -1211,7 +1290,8 @@
+ 	if(q0 == q1){
+ 		mode = (clickcount > 2) ? 2 : clickcount;
+ 		if(q0==w->q0 && clickwin==w && w->mc.msec-clickmsec<500)
+-			wstretchsel(w, selectq, &q0, &q1, mode);
++			wstretchsel(w, selectq, &q0, &q1, mode,
++				mode > 0 && touch && notword(w, w->mc.xy, selectq));
+ 		else
+ 			clickwin = w;
+ 		clickmsec = w->mc.msec;
+@@ -1476,7 +1556,7 @@
+ }
+ 
+ static void
+-wmousectl(Window *w)
++wmousectl(Window *w, int touch)
+ {
+ 	int but;
+ 
+@@ -1494,7 +1574,7 @@
+ 		else if(ptinrect(w->mc.xy, w->scrollr) || (but > 3))
+ 			wscroll(w, but);
+ 		else if(but == 1)
+-			wselect(w);
++			wselect(w, touch);
+ 	}
+ 	wclose(w);
+ }
+@@ -1504,7 +1584,7 @@
+ {
+ 	Rune *rp, *up, r;
+ 	uint qh, q0;
+-	int nr, nb, c, wid, i, npart, initial, lastb;
++	int nr, nb, c, wid, i, npart, initial, lastb, touch;
+ 	char *s, *t, part[3];
+ 	Window *w;
+ 	Mousestate *mp, m;
+@@ -1638,6 +1718,8 @@
+ 			send(crm.c2, &pair);
+ 			continue;
+ 		case WMouse:
++			touch = (w->mc.buttons & Touchstart) != 0;
++			w->mc.buttons &= ~Touchstart;
+ 			if(w->mouseopen) {
+ 				w->mouse.counter++;
+ 
+@@ -1653,7 +1735,7 @@
+ 					lastb = w->mc.buttons;
+ 				}
+ 			} else
+-				wmousectl(w);
++				wmousectl(w, touch);
+ 			break;
+ 		case WMouseread:
+ 			/* send a queued event or, if the queue is empty, the current state */

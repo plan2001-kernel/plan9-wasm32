@@ -15,7 +15,7 @@
 #   ape (APE's libraries, pcc)
 # - the screen, keyboard and mouse: clock, keys, mouse, hello, dclock,
 #   bytes, rc3, rci3 (3c's tests), rioclock, riorc, boot (/boot/init as
-#   9front's: glenda's profile, rio, stats), ctrlv, touchbar, paste
+#   9front's: glenda's profile, rio, stats), ctrlv, touchui, paste
 # - the disk (#S/sdW0, OPFS, kept across a reload): disk, diskdead
 # - libraries: crypto (libsec, libmp, libauthsrv), tls (devtls)
 # - WebAuthn (#ω): webauthn (the browser's virtual authenticator)
@@ -39,7 +39,7 @@ if [ -z "${NOBUILD:-}" ]; then
 	TREE=$tree "$root/tools/native" ape:lib.install 9/wasm32/test:all >"$root/build/test/native.log" 2>&1 || { tail -20 "$root/build/test/native.log"; exit 1; }
 fi
 rm -rf "$site"; mkdir -p "$site"
-cp "$root/build/live/index.html" "$root/build/live/platform.js" "$root/build/live/9wasm32.wasm" "$site/"
+cp "$root/build/live/index.html" "$root/build/live/platform.js" "$root/build/live/manifest.webmanifest" "$root/build/live/icon.svg" "$root/build/live"/icon-*.png "$root/build/live/sw.js" "$root/build/live/9wasm32.wasm" "$site/"
 "$root/tools/bootfs" "$tree" "$site/9wasm32.fs" "$tree/sys/src/9/wasm32/bootfs.proto" "$tree/sys/src/9/wasm32/test/test.proto" >/dev/null
 # what an interrupted run left (tools/serve, authsrv on these ports)
 for p in 18092 18093 18099; do
@@ -107,10 +107,13 @@ want boot $names && RUNS=40 DRAWS=10 KEYDELAY=12 MOUSE='[[0.4, 0.4, 1]]' KEYS='[
 # types the text - not ^V typed as a key
 want ctrlv $names && EVAL='setTimeout(() => { const k = new KeyboardEvent("keydown", { key: "v", code: "KeyV", ctrlKey: true, cancelable: true, bubbles: true }); document.dispatchEvent(k); const d = new DataTransfer(); d.setData("text/plain", "invite-abc123\n"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: d, cancelable: true, bubbles: true })); }, 4000)' \
 	run ctrlv '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; x=`{read </dev/cons}; echo got $x | xd -c >/dev/eia0; echo done"]'
-# a phone (a touch screen): the key bar under the screen; its keyboard's typing (#kbd's input events),
-# the bar's Ctrl with the next key (^U: kbdfs drops the line typed so far), Return
-want touchbar $names && TOUCH=1 EVAL='setTimeout(() => { const t = document.getElementById("kbd"), type = (i, d) => t.dispatchEvent(new InputEvent("input", { inputType: i, data: d })); document.querySelector("[data-k=kbd]").click(); type("insertText", "abc"); document.querySelector("[data-k=ctrl]").click(); type("insertText", "u"); type("insertText", "hello"); type("insertLineBreak", null); window.barshown = getComputedStyle(document.getElementById("bar")).display; }, 5000)' \
-	run touchbar '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; x=`{read </dev/cons}; echo got $x >/dev/eia0; echo done"]'
+# a phone (a touch screen): no permanent bar; a canvas finger is the
+# machine's (the menus are Rio's) and never opens the keyboard; KBD shows
+# and hides the hidden field explicitly, Fn opens the special keys, and
+# the field's input events (and ctl with the next key, ^U) still type
+want touchui $names && TOUCH=1 EXPECT=$t/touchbar.out EXPECTJS='window.touchok === true' \
+	EVAL='setTimeout(() => { const c = document.getElementById("screen"), ev = (t, id) => c.dispatchEvent(new PointerEvent(t, { pointerId: id, pointerType: "touch", clientX: 200, clientY: 200, buttons: t === "pointerdown" ? 1 : 0, bubbles: true })); ev("pointerdown", 1); ev("pointerup", 1); const untouched = document.activeElement.id !== "kbd"; const kb = document.getElementById("kbdbtn"), fn = document.getElementById("fnbar"), r = kb.getBoundingClientRect(); const visible = r.width > 0 && r.height > 0, hidden = !document.getElementById("bar") && fn.hidden, full = document.getElementById("fsbtn").textContent === "Full"; kb.click(); const opened = document.activeElement.id === "kbd" && kb.getAttribute("aria-pressed") === "true"; kb.click(); const closed = document.activeElement.id !== "kbd" && kb.getAttribute("aria-pressed") === "false"; document.getElementById("fnbtn").click(); const expanded = !fn.hidden; const type = (i, d) => document.getElementById("kbd").dispatchEvent(new InputEvent("input", { inputType: i, data: d })); kb.click(); type("insertText", "abc"); document.querySelector("[data-m=ctrl]").click(); type("insertText", "u"); type("insertText", "hello"); type("insertLineBreak", null); window.touchok = untouched && visible && hidden && full && opened && closed && expanded; }, 5000)' \
+	run touchui '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; x=`{read </dev/cons}; echo got $x >/dev/eia0; echo done"]'
 want paste $names && HALTWAIT=150 EVAL='setTimeout(() => { window.kernelpaste(("x".repeat(199) + "\r\n").repeat(100)); setTimeout(() => window.plan9.kbd("c\x04\0"), 40000); }, 4000)' \
 	run paste '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; wc -c </dev/cons >/dev/eia0; echo pasted"]'
 want crypto $names && run crypto '["/bin/d3"]'

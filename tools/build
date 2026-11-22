@@ -20,6 +20,7 @@ rm -rf "$live"; mkdir -p "$live"
 v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
 sed "s|@VERSION@|$v|" "$w/kernel.html" >"$live/index.html"
 "$here/platstamp" "$w/platform.js" "$live/platform.js"
+cp "$w/manifest.webmanifest" "$w/icon.svg" "$w"/icon-*.png "$w/sw.js" "$live/"
 cp "$tree/wasm32/9wasm32.wasm" "$live/"
 cp "$root/build/root.fs" "$live/9wasm32.fs"
 for f in "$live"/*; do gzip -9 -n -k "$f"; done

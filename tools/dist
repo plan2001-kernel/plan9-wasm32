@@ -51,6 +51,7 @@ mkdir -p "$fat"
 v="$(git -C "$root" describe --always --dirty 2>/dev/null || echo unknown) $(date -u +%Y-%m-%dT%H:%MZ)"
 sed "s|@VERSION@|$v|" "$w/kernel.html" >"$fat/index.html"
 "$here/platstamp" "$w/platform.js" "$fat/platform.js"
+cp "$w/manifest.webmanifest" "$w/icon.svg" "$w"/icon-*.png "$w/sw.js" "$fat/"
 
 # the image's root: the tree branch's files (tools/treebranch: the source, as 9front's git has
 # it), the release's directories git does not keep (cfg, cron, mail, usr, tmp), the programs
@@ -148,7 +149,7 @@ echo "dist: $d/plan9-wasm32.iso ($(du -h "$d/plan9-wasm32.iso" | cut -f1)): the 
 # - cdboot: /boot/init mounts the CD (iso=: the page's read-only disk, sdW1) as the root
 live=$d/live
 rm -rf "$live"; mkdir -p "$live"
-cp "$fat/index.html" "$fat/platform.js" "$fat/9wasm32.fs" "$tree/wasm32/9wasm32.wasm" "$live/"
+cp "$fat/index.html" "$fat/platform.js" "$fat/manifest.webmanifest" "$fat/icon.svg" "$fat"/icon-*.png "$fat/sw.js" "$fat/9wasm32.fs" "$tree/wasm32/9wasm32.wasm" "$live/"
 printf 'cdboot=yes\niso=plan9-wasm32.iso\n' >"$live/plan9.ini"
 for f in "$live"/*; do gzip -9 -n -k "$f"; done
 ln "$d/plan9-wasm32.iso" "$live/plan9-wasm32.iso"
