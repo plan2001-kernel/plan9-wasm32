@@ -121,11 +121,26 @@ if [ -e "$tree/sys/src/cmd/pcc.c" ] && { [ ! -x "$bin/pcc" ] || [ "$tree/sys/src
 	rm -rf "$m"
 fi
 # aux/kbdfs's latin1.h, made from /lib/keyboard by mklatin, a program for
-# the host: the release does not ship it; made here with plan9port
+# the host: the release does not ship it; made here with plan9port.
+# The released mklatin's Trie.seq[MAXLD+1] only fits two-key sequences,
+# but /lib/keyboard contains longer sequences.  Its unchecked strcpy
+# overflows the trie for those entries.  kbdfs's latin1 table supports
+# only MAXLD=2; skip longer sequences in this HOST generator copy.
 k=$tree/sys/src/cmd/aux/kbdfs
 if [ -e "$k/mklatin.c" ] && [ ! -e "$k/latin1.h" ]; then
 	m=$(mktemp -d)
-	(cd "$m" && PATH=$PLAN9/bin:$PATH 9c "$k/mklatin.c" && PATH=$PLAN9/bin:$PATH 9l -o mklatin mklatin.o &&
+	cp "$k/mklatin.c" "$m/mklatin.c"
+	python3 - "$m/mklatin.c" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = 'if(inseq && p-seq >= 2) {'
+new = 'if(inseq && p-seq >= 2 && p-seq <= MAXLD) {'
+if s.count(old) != 1:
+    raise SystemExit('native: unexpected upstream mklatin.c; review bounds guard')
+open(p, 'w').write(s.replace(old, new))
+PY
+	(cd "$m" && PATH=$PLAN9/bin:$PATH 9c mklatin.c && PATH=$PLAN9/bin:$PATH 9l -o mklatin mklatin.o &&
 		./mklatin "$tree/lib/keyboard" >"$k/latin1.h") || { echo "native: latin1.h" >&2; rm -f "$k/latin1.h"; exit 1; }
 	rm -rf "$m"
 fi
