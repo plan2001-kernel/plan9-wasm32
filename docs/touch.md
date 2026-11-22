@@ -18,21 +18,27 @@ mouse click does:
 - a drag past a small slop is button 1 down at the first point, a move
   for each move, and button 1 up: ordinary Rio text selection;
 - two quick taps are two ordinary clicks, so Rio's own double-click
-  code (`wind.c`: 500 ms and 3 pixels) selects the word, or performs
-  its normal double-click behavior on empty text.  The page has no
-  separate word or line selection algorithm.
+  code (`wind.c`: 500 ms and 3 pixels) selects the word under a tap on
+  the text.  A double tap on a blank (space or tab) or in the empty left
+  or right margin selects that line instead.  The page has no separate
+  word or line selection algorithm.
 
 The page sends each tap at release.  Rio's own click timing and
 text-boundary interpretation are unchanged; a double tap never becomes
 a drag or a long press because it stays inside the slop and below the
 long-press time.
 
-A touch double tap in the empty left or right margin, or on a blank
-(space or tab, including the prompt's trailing space), does not stretch
-into a word.  The `term% ` shell prompt (or another word on that line)
-is not selected from empty space; word and line selection still use
-Rio's own logic when the tap is on the text itself.  This is touch-only;
-a physical mouse keeps its original double-click behavior.
+A line selection uses Rio's input boundary, `w->qh`, when it lies on
+that line.  On the current editable input line `qh` is after the
+shell's prompt output and before the user's input, so a touch double
+tap on blank space or a margin selects the input without the prompt.
+A prompt-only line therefore gives an empty selection.  Nothing
+matches or hardcodes `term% `: any shell's prompt is excluded the same
+way.  On a historical output line `qh` is not on the line, so the line
+is selected as it is; Rio cannot tell which of its old characters were
+prompts.  A wrapped input line is one logical line, and both its rows
+share the same prompt boundary.  This is touch-only; a physical mouse
+keeps its original double-click behavior.
 
 ## Long press: button 2
 

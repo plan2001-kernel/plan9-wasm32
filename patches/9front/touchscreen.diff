@@ -489,7 +489,7 @@
  #define	runemove(a, b, n)	memmove(a, b, (n)*sizeof(Rune))
 --- a/sys/src/cmd/rio/wind.c
 +++ b/sys/src/cmd/rio/wind.c
-@@ -1086,13 +1086,92 @@
+@@ -1086,6 +1086,135 @@
  	return (mode == 1) ? isalnum(r) : r && !isspace(r);
  }
  
@@ -527,35 +527,48 @@
 + * Is the click on a blank (space or tab) between words?  The prompt's
 + * trailing space is visually empty, so a touch double click there is
 + * not a word selection either.
++ *
++ * q is a buffer index, as wselect's selectq is; frptofchar takes a
++ * frame index (q - w->org).
 + */
 +static int
 +onblank(Window *w, Point p, ulong q)
 +{
 +	Point pt, pe;
 +	Rune r;
++	uint fq;
 +
 +	if(w->nr == 0)
 +		return 1;
 +	if(q > w->nr)
 +		q = w->nr;
-+	if(q == w->nr)
-+		q = w->nr-1;
-+	pt = frptofchar(w, q);
++	if(q == w->nr){
++		if(q == 0)
++			return 1;
++		q--;
++	}
++	if(q < w->org)
++		return 0;
++	fq = q - w->org;
++	if(fq >= w->nchars)
++		return 0;
++	pt = frptofchar(w, fq);
 +	if(p.y < pt.y)
 +		return 1;	/* after the line above */
 +	if(p.y >= pt.y + w->font->height)
 +		return 0;	/* another line */
 +	if(p.x < pt.x){
-+		if(q == 0)
++		if(fq == 0)
 +			return 0;	/* the left margin (inmargin) */
++		fq--;
 +		q--;
-+		pt = frptofchar(w, q);
-+		pe = frptofchar(w, q+1);
++		pt = frptofchar(w, fq);
++		pe = frptofchar(w, fq+1);
 +	}else
-+		pe = frptofchar(w, q+1);
++		pe = frptofchar(w, fq+1);
 +	if(p.x < pt.x || p.x >= pe.x)
 +		return 0;
-+	r = w->r[w->org+q];
++	r = w->r[q];
 +	if(r == '\n')
 +		return 1;
 +	return isspace(r);
@@ -567,51 +580,129 @@
 +	return inmargin(w, p) || onblank(w, p, q);
 +}
 +
- static void
--wstretchsel(Window *w, uint pt, uint *q0, uint *q1, int mode)
-+wstretchsel(Window *w, uint pt, uint *q0, uint *q1, int mode, int nofill)
- {
- 	int c, i, rc, lc;
- 	Rune *r, *l, *p;
- 	uint q;
- 
-+	if(nofill){
-+		*q0 = pt;
-+		*q1 = pt;
++/*
++ * The logical line at p, without its newline.  p is in the window's
++ * frame coordinates.  A wrapped visual line belongs to the same logical
++ * line as the rows above and below it.
++ */
++static void
++wlinebounds(Window *w, Point p, uint *q0, uint *q1)
++{
++	uint q;
++
++	*q0 = 0;
++	*q1 = 0;
++	if(w->nr == 0)
 +		return;
-+	}
- 	if(mode){
- 		lc = *q0 > 0     ? w->r[*q0-1] : '\n';
- 		rc = *q1 < w->nr ? w->r[*q1]   : '\n';
-@@ -1150,7 +1229,7 @@
++	q = w->org + frcharofpt(w, Pt(w->Frame.r.min.x, p.y));
++	if(q > w->nr)
++		q = w->nr;
++	/* the start of p's visual row, then back to the logical line's start */
++	while(q > 0 && w->r[q-1] != '\n')
++		q--;
++	*q0 = q;
++	*q1 = q;
++	while(*q1 < w->nr && w->r[*q1] != '\n')
++		(*q1)++;
++}
++
++/*
++ * A touch double click on blank space or an empty margin selects the
++ * line.  On the current editable input line the shell's prompt is
++ * output: w->qh is the boundary between it and the user's input.  Start
++ * the selection there, but only if qh is on this line, so historical
++ * output lines keep their full selection.  Nothing here matches a
++ * shell's prompt text.
++ */
++static void
++wlinesel(Window *w, Point p, uint *q0, uint *q1)
++{
++	wlinebounds(w, p, q0, q1);
++	if(*q0 <= w->qh && w->qh <= *q1)
++		*q0 = w->qh;
++}
++
+ static void
+ wstretchsel(Window *w, uint pt, uint *q0, uint *q1, int mode)
+ {
+@@ -1149,8 +1278,51 @@
+ 		(*q0)--;
  }
  
++/*
++ * Touch double clicks on empty space mean the line, not a word.  A
++ * click on a word keeps wstretchsel's ordinary selection.
++ */
++static void
++wtouchsel(Window *w, Point p, uint selectq, uint *q0, uint *q1, int mode, int touch)
++{
++	if(touch && mode > 0 && notword(w, p, selectq)){
++		wlinesel(w, p, q0, q1);
++		return;
++	}
++	wstretchsel(w, selectq, q0, q1, mode);
++}
++
++/*
++ * Tools/test/run riotouch: the selection a touch double click makes,
++ * as range and text.  A test sets riotest=1; otherwise this is nothing.
++ */
++static void
++wtrace(Window *w, int touch, int clicks)
++{
++	char *s;
++	int fd, n;
++
++	if(!touch || clicks <= 0 || getenv("riotest") == nil)
++		return;
++	if(w->q1 < w->q0 || w->q0 > w->nr || w->q1 > w->nr)
++		return;
++	fd = open("/tmp/riotest", OWRITE);
++	if(fd < 0)
++		fd = create("/tmp/riotest", OWRITE, 0666);
++	if(fd < 0)
++		return;
++	if(seek(fd, 0, 2) < 0){
++		close(fd);
++		return;
++	}
++	s = runetobyte(w->r+w->q0, w->q1-w->q0, &n);
++	fprint(fd, "%ud %ud %.*s\n", w->q0, w->q1, n, s);
++	free(s);
++	close(fd);
++}
++
  static void
 -wselect(Window *w)
 +wselect(Window *w, int touch)
  {
  	uint q0, q1;
  	int b, x, y, dx, dy, mode, first;
-@@ -1172,7 +1251,7 @@
+@@ -1172,7 +1344,7 @@
  		clickcount = 0;
  	if(clickwin == w && clickcount >= 1 && w->mc.msec-clickmsec < 500){
  		mode = (clickcount > 2) ? 2 : clickcount;
 -		wstretchsel(w, selectq, &q0, &q1, mode);
-+		wstretchsel(w, selectq, &q0, &q1, mode, touch && notword(w, w->mc.xy, selectq));
++		wtouchsel(w, w->mc.xy, selectq, &q0, &q1, mode, touch);
  		wsetselect(w, q0, q1);
  		x = w->mc.xy.x;
  		y = w->mc.xy.y;
-@@ -1211,7 +1290,8 @@
+@@ -1211,12 +1383,13 @@
  	if(q0 == q1){
  		mode = (clickcount > 2) ? 2 : clickcount;
  		if(q0==w->q0 && clickwin==w && w->mc.msec-clickmsec<500)
 -			wstretchsel(w, selectq, &q0, &q1, mode);
-+			wstretchsel(w, selectq, &q0, &q1, mode,
-+				mode > 0 && touch && notword(w, w->mc.xy, selectq));
++			wtouchsel(w, w->mc.xy, selectq, &q0, &q1, mode, touch);
  		else
  			clickwin = w;
  		clickmsec = w->mc.msec;
-@@ -1476,7 +1556,7 @@
+ 	}
+ 	wsetselect(w, q0, q1);
++	wtrace(w, touch, clickcount);
+ 	while(w->mc.buttons){
+ 		w->mc.msec = 0;
+ 		b = w->mc.buttons;
+@@ -1476,7 +1649,7 @@
  }
  
  static void
@@ -620,7 +711,7 @@
  {
  	int but;
  
-@@ -1494,7 +1574,7 @@
+@@ -1494,7 +1667,7 @@
  		else if(ptinrect(w->mc.xy, w->scrollr) || (but > 3))
  			wscroll(w, but);
  		else if(but == 1)
@@ -629,7 +720,7 @@
  	}
  	wclose(w);
  }
-@@ -1504,7 +1584,7 @@
+@@ -1504,7 +1677,7 @@
  {
  	Rune *rp, *up, r;
  	uint qh, q0;
@@ -638,7 +729,7 @@
  	char *s, *t, part[3];
  	Window *w;
  	Mousestate *mp, m;
-@@ -1638,6 +1718,8 @@
+@@ -1638,6 +1811,8 @@
  			send(crm.c2, &pair);
  			continue;
  		case WMouse:
@@ -647,7 +738,7 @@
  			if(w->mouseopen) {
  				w->mouse.counter++;
  
-@@ -1653,7 +1735,7 @@
+@@ -1653,7 +1828,7 @@
  					lastb = w->mc.buttons;
  				}
  			} else

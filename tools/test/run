@@ -15,7 +15,8 @@
 #   ape (APE's libraries, pcc)
 # - the screen, keyboard and mouse: clock, keys, mouse, hello, dclock,
 #   bytes, rc3, rci3 (3c's tests), rioclock, riorc, boot (/boot/init as
-#   9front's: glenda's profile, rio, stats), ctrlv, touchui, paste
+#   9front's: glenda's profile, rio, stats), ctrlv, touchui, riotouch,
+#   paste
 # - the disk (#S/sdW0, OPFS, kept across a reload): disk, diskdead
 # - libraries: crypto (libsec, libmp, libauthsrv), tls (devtls)
 # - WebAuthn (#ω): webauthn (the browser's virtual authenticator)
@@ -114,6 +115,14 @@ want ctrlv $names && EVAL='setTimeout(() => { const k = new KeyboardEvent("keydo
 want touchui $names && TOUCH=1 EXPECT=$t/touchbar.out EXPECTJS='window.touchok === true' \
 	EVAL='setTimeout(() => { const c = document.getElementById("screen"), ev = (t, id) => c.dispatchEvent(new PointerEvent(t, { pointerId: id, pointerType: "touch", clientX: 200, clientY: 200, buttons: t === "pointerdown" ? 1 : 0, bubbles: true })); ev("pointerdown", 1); ev("pointerup", 1); const untouched = document.activeElement.id !== "kbd"; const kb = document.getElementById("kbdbtn"), fn = document.getElementById("fnbar"), r = kb.getBoundingClientRect(); const visible = r.width > 0 && r.height > 0, hidden = !document.getElementById("bar") && fn.hidden, full = document.getElementById("fsbtn").textContent === "Full"; kb.click(); const opened = document.activeElement.id === "kbd" && kb.getAttribute("aria-pressed") === "true"; kb.click(); const closed = document.activeElement.id !== "kbd" && kb.getAttribute("aria-pressed") === "false"; document.getElementById("fnbtn").click(); const expanded = !fn.hidden; const type = (i, d) => document.getElementById("kbd").dispatchEvent(new InputEvent("input", { inputType: i, data: d })); kb.click(); type("insertText", "abc"); document.querySelector("[data-m=ctrl]").click(); type("insertText", "u"); type("insertText", "hello"); type("insertLineBreak", null); window.touchok = untouched && visible && hidden && full && opened && closed && expanded; }, 5000)' \
 	run touchui '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; x=`{read </dev/cons}; echo got $x >/dev/eia0; echo done"]'
+# Rio's own touch selection (wind.c): a word, a current input line (its
+# shell prompt excluded through w->qh), a prompt-only line, historical
+# lines, both empty margins, and a wrapped line.  riotest=1 makes Rio
+# write each double click's range and text to /tmp/riotest; the checks
+# below assert both.
+want riotouch $names && TOUCH=1 HALTWAIT=120 EXPECT=$t/riotouch.out \
+	EXPECTJS="$(cat "$here/riotouch.check")" EVAL="$(cat "$here/riotouch.js")" \
+	run riotouch '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; rm -f /tmp/riotest; riotest=1 rio -i '"'"'window -r -10 0 390 300 rc'"'"' >[2]/dev/null & sleep 45; echo BEGIN; cat /tmp/riotest; echo END"]'
 want paste $names && HALTWAIT=150 EVAL='setTimeout(() => { window.kernelpaste(("x".repeat(199) + "\r\n").repeat(100)); setTimeout(() => window.plan9.kbd("c\x04\0"), 40000); }, 4000)' \
 	run paste '["/bin/rc", "-c", "aux/kbdfs -q -s cons /dev/eia0; wc -c </dev/cons >/dev/eia0; echo pasted"]'
 want crypto $names && run crypto '["/bin/d3"]'
