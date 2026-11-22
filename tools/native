@@ -31,11 +31,14 @@ if sed --version 2>/dev/null | grep -q GNU; then
 import sys
 p = sys.argv[1]
 s = open(p).read()
-# GNU sed leaves unmatched lines unchanged.  9front's original
-# SYS recipe then treats the literal "#define" as a syscall name and
-# compiles "#define.c".  Enumerate only actual macro-name fields.
+# GNU sed leaves unmatched lines unchanged. The original SYS command
+# accidentally included literal '#define' words in the syscall list.
+# Emit only macro names and explicitly ignore the old _X[123] entries.
 old = "SYS=`{sed '/^#define._X[123]/d; s/#define.([A-Z0-9_]*).*/\\1/' sys.h}"
-new = "SYS=`{sed -n 's/^#define[ \\t][ \\t]*//p' sys.h | sed 's/[ \\t].*//' | grep -v '^_X[123]
+new = "SYS=`{sed -n 's/^#define[ \t][ \t]*//p' sys.h | sed 's/[ \t].*//' | grep -v '^_X[123]$'}"
+if s.count(old) != 1:
+    raise SystemExit('native: unexpected syscall enumeration')
+s = s.replace(old, new)
 # Generate wasm32 wrappers against the syscall number macros rather than
 # interpolating a sometimes-empty GNU sed result inside rc's quoted strings.
 # This is host-build-only; the checked-in 9front patch stays unchanged.
