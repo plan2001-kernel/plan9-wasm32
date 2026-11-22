@@ -1,31 +1,50 @@
 #!/bin/bash
 # Plan9-wasm32 built natively, with 9front's own mkfiles, as objtype=wasm32
-# mk on a 9front machine builds it - here on Linux: the tree (tools/tree)
-# as / in a mount namespace of its own (bwrap: its /sys and every /$objtype,
-# the host's other directories; no root needed), plan9port's mk, rc and
-# yacc ($PLAN9), the host's 3c and 3l (tools/hostcc), and an ar that takes
-# Plan 9's "ar vu".  What it builds goes to the tree's /wasm32 (lib, bin)
-# and /sys/src/9/wasm32.  DIRs that need others' libraries need those DIRs
-# before them.
+# mk on a 9front machine builds it - here: the tree (tools/tree) as / ,
+# plan9port's mk, rc and yacc ($PLAN9), the host's 3c and 3l
+# (tools/hostcc), and an ar that takes Plan 9's "ar vu".  What it builds
+# goes to the tree's /wasm32 (lib, bin) and /sys/src/9/wasm32.  DIRs that
+# need others' libraries need those DIRs before them.
 #   PLAN9=... tools/native [DIR[:TARGET,...]...]
 #        DIRs under /sys/src, in order, each mk install or mk TARGETs
 #        (default: the libraries, the kernel, the boot file system's programs)
 #   TREE=dir: a tree already made, else build/tree made anew; MKFLAGS: mk's (-k)
+#   NATIVE_WRAP: auto (default), direct, bwrap, proot or unshare.
+#        bwrap: a mount namespace, no root needed (Linux).  proot: path
+#        mapping, no namespaces (Termux/Android, where bwrap and unshare
+#        are unavailable); it is not process isolation.  direct: the tree
+#        already is this process's / (a real chroot/container).  unshare:
+#        mount namespace, needs root or user namespaces.
+#   The absolute /sys, /wasm32 and /lib paths in 9front's mkfiles are what
+#   the bwrap/proot/direct choice maps; direct only works when they are
+#   already the tree's.
 set -e
 here=$(cd "$(dirname "$0")" && pwd); root=$(dirname "$here")
 [ -x "${PLAN9:-}/bin/mk" ] && [ -x "$PLAN9/bin/rc" ] || { echo "native: PLAN9 must name a plan9port with mk and rc" >&2; exit 2; }
 tree=${TREE:-$root/build/tree}
 [ -n "${TREE:-}" ] || "$here/tree" "$tree" >/dev/null
 tree=$(cd "$tree" && pwd)
+# 9front's recipes use Plan 9 sed's bare (...) grouping; GNU sed needs
+# \(...\).  Only the recipes the wasm32 build reaches are changed here.
+if sed --version 2>/dev/null | grep -q GNU; then
+	python3 - "$tree/sys/src/libc/9syscall/mkfile" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace('s/#define.([A-Z0-9_]*).*/\\1/', 's/#define.\\([A-Z0-9_]*\\).*/\\1/')
+open(p, 'w').write(s)
+PY
+fi
 "$here/hostcc/build" 3c 3l >/dev/null
 bin=$root/build/host/bin
 mkdir -p "$bin" "$tree/wasm32/lib" "$tree/wasm32/bin"
-cat >"$bin/ar" <<'X'
+hostar=$(command -v ar || echo /usr/bin/ar)
+cat >"$bin/ar" <<X
 #!/bin/sh
 # Plan 9's ar: its key may be implied (mksyslib's "ar vu LIB FILES": r)
-k=$1; shift
-case $k in *[dmpqrtx]*) ;; *) k=r$k ;; esac
-exec /usr/bin/ar "$k" "$@"
+k=\$1; shift
+case \$k in *[dmpqrtx]*) ;; *) k=r\$k ;; esac
+exec $hostar "\$k" "\$@"
 X
 chmod 775 "$bin/ar"
 # size, which some mkfiles run on what they made (cwfs): Plan 9's says the
@@ -77,8 +96,18 @@ fi
 if [ -e "$tree/sys/src/cmd/cpp/cpp.c" ] && [ ! -x "$bin/cpp" ]; then
 	m=$(mktemp -d)
 	cp "$tree"/sys/src/cmd/cpp/*.[ch] "$m/"
+	# bionic's stdio.h includes fcntl.h/unistd.h; include it before
+	# plan9port's libc.h macros rename open/creat/dup to p9open/...
+	python3 - "$m"/*.c <<'PY'
+import sys
+for p in sys.argv[1:]:
+	s = open(p).read()
+	s = s.replace('#include <u.h>\n#include <libc.h>\n#include <stdio.h>\n',
+		'#include <u.h>\n#include <stdio.h>\n#include <libc.h>\n')
+	open(p, 'w').write(s)
+PY
 	sed -i 's/^extern[ \t]*int getopt(int, char \*\*, char \*);//' "$m/nlist.c"	# POSIX's getopt is declared already
-	gcc -O2 -w -fcommon -Wno-int-conversion -I"$PLAN9/include" -o "$bin/cpp" "$m"/*.c -L"$PLAN9/lib" -l9 ||
+	gcc -O2 -w -fcommon -Wno-int-conversion -I"$PLAN9/include" -o "$bin/cpp" "$m"/*.c -L"$PLAN9/lib" -l9 -lm ||
 		{ echo "native: cpp" >&2; exit 1; }
 	rm -rf "$m"
 fi
@@ -127,7 +156,23 @@ touch -d 1980-01-01 "$ucd/keyboard"
 # a root of its own (the host's directories, the tree's /sys and every
 # /$objtype it has: libmach includes /arm/include/ureg.h ...), no root
 # needed; else unshare, which needs /wasm32 made by root
-if command -v bwrap >/dev/null; then
+wrap_mode=${NATIVE_WRAP:-auto}
+if [ "$wrap_mode" = auto ]; then
+	if command -v bwrap >/dev/null; then
+		wrap_mode=bwrap
+	elif command -v proot >/dev/null; then
+		wrap_mode=proot
+	else
+		wrap_mode=unshare
+	fi
+fi
+case $wrap_mode in
+direct)
+	# The tree is already this process's / (a real chroot or container):
+	# no bwrap, unshare or path mapping is needed.
+	wrap=()
+	;;
+bwrap)
 	wrap=(bwrap --dev /dev --proc /proc --tmpfs /tmp)
 	for d in /*; do
 		n=${d#/}
@@ -165,9 +210,39 @@ if command -v bwrap >/dev/null; then
 	done
 	[ -e /lib/ucd ] && wrap+=(--bind "$ucd" /lib/ucd)
 	[ -e /lib/keyboard ] && wrap+=(--bind "$ucd/keyboard" /lib/keyboard)
-else
+	;;
+proot)
+	# Termux/Android: no user namespaces and no bwrap.  proot is not a
+	# namespace: it rewrites path lookups in the child, which is what the
+	# 9front mkfiles need for their absolute /sys, /wasm32 and /lib paths.
+	ntmp=$(mktemp -d)
+	trap 'rm -rf "$ucd" "$ntmp"' EXIT
+	# Termux's termux-exec (LD_PRELOAD) rewrites execve paths and breaks
+	# proot's bindings; the build inside proot does not need it.
+	wrap=(env -u LD_PRELOAD proot -0 -r / -b "$ntmp:/tmp")
+	wrap+=(-b "$tree/sys:/sys" -b "$tree/wasm32:/wasm32")
+	[ ! -d "$tree/lib" ] || wrap+=(-b "$tree/lib:/lib")
+	[ ! -d "$tree/rc" ] || wrap+=(-b "$tree/rc:/rc")
+	wrap+=(-b "$ucd:/lib/ucd" -b "$ucd/keyboard:/lib/keyboard")
+	# /bin is a symlink to /system/bin on Android; bind rc at the resolved
+	# directory so that #!/bin/rc scripts find it.
+	bindir=$( [ -d /bin ] && readlink -f /bin || echo /bin )
+	[ ! -x "$PLAN9/bin/rc" ] || wrap+=(-b "$PLAN9/bin/rc:$bindir/rc")
+	for d in "$tree"/*; do
+		n=$(basename "$d")
+		case $n in sys|lib|rc|usr|adm|tmp|mnt|n|dev|env|proc|fd|srv|net|bin|wasm32) continue ;; esac
+		[ -d "$d/include" ] || [ -d "$d/bin" ] || [ -d "$d/lib" ] || continue	# an /$objtype
+		wrap+=(-b "$d:/$n")
+	done
+	;;
+unshare)
 	wrap=(unshare $( [ "$(id -u)" = 0 ] || echo -r ) -m --propagation private)
-fi
+	;;
+*)
+	echo "native: NATIVE_WRAP=$wrap_mode? (direct, bwrap, proot or unshare)" >&2
+	exit 2
+	;;
+esac
 "${wrap[@]}" bash -s "$tree" "$bin" "$PLAN9" "$ucd" $dirs <<'X'
 set -e
 tree=$1 bin=$2 P9=$3 ucd=$4; shift 4
