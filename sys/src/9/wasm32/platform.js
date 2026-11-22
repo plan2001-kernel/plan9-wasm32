@@ -1295,16 +1295,135 @@ export async function boot(url, front = {}) {
 			const b = canvas.getBoundingClientRect();
 			return [Math.round((e.clientX - b.left) * canvas.width / b.width), Math.round((e.clientY - b.top) * canvas.height / b.height)];
 		};
-		/* a finger is button 1, or the one the page's key bar has chosen (front.touchbutton: 1 2 4) */
-		const bits = (e) => e.pointerType === 'touch' ? (e.buttons & 1 ? (front.touchbutton?.() ?? 1) : 0) :
-			(e.buttons & 1 ? 1 : 0) | (e.buttons & 4 ? 2 : 0) | (e.buttons & 2 ? 4 : 0);
+		/*
+		 * A finger is a gesture, not a button held down:
+		 *
+		 * - a tap sends button 1 down and up at once.  Two taps are
+		 *   two clicks, so Rio's own 500 ms/distance double-click
+		 *   logic (wind.c) selects the word or line; the page has no
+		 *   selection algorithm of its own.
+		 * - a drag sends button 1 down at the first point and a move
+		 *   for each move after the slop: Rio's ordinary selection.
+		 * - a long press (still within the slop) sends LONGREQ, not a
+		 *   click: Rio opens its persistent button 2 menu.
+		 * - every tap then sends MENUREQ: Rio opens its persistent
+		 *   button 3 menu if the point is the gray desktop, and
+		 *   ignores it in a window (an ordinary tap is not a menu).
+		 *
+		 * TOUCH marks every finger event; MENUREQ and LONGREQ are
+		 * requests for the two menus; TOUCHSTART marks the first
+		 * button 1 down of a gesture so Rio can tell a touch double
+		 * click from a physical one.  A physical mouse sends none.
+		 * Rio strips them before a window sees the event.
+		 */
+		const TOUCH = 1 << 6, MENUREQ = 1 << 7, LONGREQ = 1 << 17, TOUCHSTART = 1 << 18;
+		const SLOP = 8, LONGPRESS = 500;
+		const physical = (e) => (e.buttons & 1 ? 1 : 0) | (e.buttons & 4 ? 2 : 0) | (e.buttons & 2 ? 4 : 0);
+		let touch = null;
+		const tmouse = (p, b, move) => mouse(p[0], p[1], b | TOUCH, move);
+		const timestop = (t) => { if (t.timer) { clearTimeout(t.timer); t.timer = 0; } };
 		canvas.addEventListener('pointermove', (e) => {
-			const b = bits(e), moved = b === buttons;	/* buttons change on a move too (chords) */
-			buttons = b;
-			mouse(...at(e), buttons, moved);
+			if (e.pointerType !== 'touch') {
+				const b = physical(e), moved = b === buttons;	/* buttons change on a move too (chords) */
+				buttons = b;
+				mouse(...at(e), buttons, moved);
+				return;
+			}
+			if (!touch || e.pointerId !== touch.id || !touch.down) return;
+			if (touch.long || touch.blocked) { e.preventDefault(); return; }
+			const p = at(e);
+			touch.p = p;
+			if (!touch.sent){
+				/* a finger's jitter is still a tap: no move until SLOP */
+				if (Math.hypot(p[0] - touch.p0[0], p[1] - touch.p0[1]) <= SLOP)
+					return;
+				timestop(touch);
+				touch.moved = true;
+				touch.sent = true;
+				buttons = 1;
+				tmouse(touch.p0, 1 | TOUCHSTART, false);	/* the drag began here */
+				tmouse(p, 1, true);
+				e.preventDefault();
+				return;
+			}
+			tmouse(p, 1, true);
+			e.preventDefault();
 		});
-		canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); buttons = bits(e); mouse(...at(e), buttons); e.preventDefault(); });
-		canvas.addEventListener('pointerup', (e) => { buttons = bits(e); mouse(...at(e), buttons); });
+		canvas.addEventListener('pointerdown', (e) => {
+			e.preventDefault();
+			if (e.pointerType !== 'touch') {
+				try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+				buttons = physical(e);
+				mouse(...at(e), buttons);
+				return;
+			}
+			if (touch) {	/* a second finger: cancel the first, no click */
+				timestop(touch);
+				if (touch.sent) {
+					tmouse(touch.p, 0, false);
+					touch.sent = false;
+				}
+				buttons = 0;
+				touch.down = false;
+				touch.blocked = true;
+				return;
+			}
+			try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+			const p = at(e), t = {
+				id: e.pointerId, p0: p, p, down: true,
+				moved: false, sent: false, blocked: false, long: false, timer: 0,
+			};
+			touch = t;
+			t.timer = setTimeout(() => {
+				if (touch !== t || !t.down || t.moved || t.sent || t.blocked)
+					return;
+				t.timer = 0;
+				t.long = true;
+				mouse(t.p0[0], t.p0[1], TOUCH | LONGREQ, false);
+			}, LONGPRESS);
+		});
+		const touchend = (e, cancel) => {
+			if (e.pointerType !== 'touch') {
+				buttons = physical(e);
+				mouse(...at(e), buttons);
+				return;
+			}
+			if (!touch || e.pointerId !== touch.id) return;
+			const t = touch, p = cancel ? t.p : at(e);
+			touch = null;
+			timestop(t);
+			t.down = false;
+			if (t.sent) {	/* the end of a drag */
+				tmouse(p, 0, false);
+				buttons = 0;
+			} else if (!cancel && !t.blocked && !t.long) {
+				/* a tap: the click Rio's client reads, then a menu only on the desktop */
+				tmouse(t.p0, 1 | TOUCHSTART, false);
+				buttons = 1;
+				tmouse(t.p0, 0, false);
+				buttons = 0;
+				mouse(t.p0[0], t.p0[1], TOUCH | MENUREQ, false);
+			}
+			e.preventDefault();
+		};
+		canvas.addEventListener('pointerup', (e) => touchend(e, false));
+		canvas.addEventListener('pointercancel', (e) => touchend(e, true));
+		canvas.addEventListener('lostpointercapture', (e) => {
+			if (e.pointerType === 'touch' && touch && e.pointerId === touch.id) {
+				timestop(touch);
+				if (touch.sent) tmouse(touch.p, 0, false);
+				buttons = 0;
+				touch = null;
+			}
+		});
+		window.addEventListener('blur', () => {
+			if (touch) {
+				timestop(touch);
+				if (touch.sent) tmouse(touch.p, 0, false);
+			}
+			buttons = 0;
+			touch = null;
+		});
 		canvas.addEventListener('wheel', (e) => {
 			const p = at(e), w = e.deltaY < 0 ? 8 : 16;
 			mouse(...p, buttons | w);

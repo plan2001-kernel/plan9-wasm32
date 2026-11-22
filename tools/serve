@@ -21,7 +21,8 @@ while args[:1] in (['-d'], ['-g']):
 		gateway = int(args[1])
 	args = args[2:]
 port = int(args[0]) if args else 18300
-TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.wasm': 'application/wasm'}
+TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.wasm': 'application/wasm',
+	'.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml'}
 
 class H(http.server.SimpleHTTPRequestHandler):
 	def __init__(self, *a, **k):

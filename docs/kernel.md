@@ -73,7 +73,7 @@ protocols and media pc's config has), and the platform's own:
 | `#t` | `uartwasm32.c` | the serial port `eia0`: the page's console |
 | `#ω` | `devwebauthn.c` | WebAuthn (`docs/webauthn.md`) |
 | `#¶` | `devswap.c` | `swap`: the memory, as 9front's devswap says it (no paging, no swap) |
-| screen | `screen.c` | XRGB32 in the kernel's memory, drawn by the page on its canvas (`platflush`) |
+| screen | `screen.c` | XRGB32 in the kernel's memory, drawn by the page on its canvas (`platflush`); a finger and its Rio menus: `docs/touch.md` |
 
 The network is 9front's own: ipconfig, DHCP, ARP, TCP, UDP, cs and dns
 over an Ethernet card, as on a virtual machine.  The card's wire is a

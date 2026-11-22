@@ -29,6 +29,7 @@ sed "s|@ISOVERSION@|$isoversion|; s|@ISO@|plan9-wasm32.iso, $size MB|; s|@VERSIO
 	"$root/tools/site/index.html" >"$site/plan9-wasm32/index.html"
 sed "s|@VERSION@|$v|" "$root/sys/src/9/wasm32/kernel.html" >"$site/plan9-wasm32/boot/index.html"
 "$root/tools/platstamp" "$root/sys/src/9/wasm32/platform.js" "$site/plan9-wasm32/boot/platform.js"
+cp "$root/sys/src/9/wasm32/manifest.webmanifest" "$root/sys/src/9/wasm32/icon.svg" "$root/sys/src/9/wasm32"/icon-*.png "$root/sys/src/9/wasm32/sw.js" "$site/plan9-wasm32/boot/"
 cp "$live/9wasm32.wasm" "$live/9wasm32.fs" "$site/plan9-wasm32/boot/"
 printf 'cdboot=yes\niso=/iso/plan9-wasm32.iso\n' >"$site/plan9-wasm32/boot/plan9.ini"
 ln "$iso" "$site/iso/plan9-wasm32.iso"

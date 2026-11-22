@@ -1,0 +1,21 @@
+(() => {
+	const o = window.plan9.eia0out();
+	const i = o.lastIndexOf("BEGIN\n"), j = o.indexOf("\nEND", i);
+	if(i < 0 || j < 0)
+		return false;
+	const rows = o.slice(i+6, j).split("\n").filter((l) => l !== "").map((l) => {
+		const m = /^(\d+) (\d+) (.*)$/.exec(l);
+		return m ? [+m[1], +m[2], m[3]] : null;
+	});
+	if(rows.length !== 7 || rows.some((r) => r === null))
+		return false;
+	const digits = "0123456789".repeat(6);
+	const [input, hist, out, prompt, word, left, wrapped] = rows;
+	return input[2] === "echo alpha beta" && input[1]-input[0] === 15
+		&& hist[0] === 0 && hist[2].endsWith("echo alpha beta")
+		&& out[2] === "alpha beta" && out[1]-out[0] === 10
+		&& prompt[2] === "" && prompt[0] === prompt[1]
+		&& word[2] === "alpha" && word[1]-word[0] === 5
+		&& left[2] === "alpha beta" && left[1]-left[0] === 10
+		&& wrapped[2] === digits && wrapped[1]-wrapped[0] === 60;
+})()

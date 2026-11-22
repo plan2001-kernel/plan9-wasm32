@@ -65,7 +65,7 @@ p9 = os.environ.get('PLAN9', os.path.expanduser('~/plan9port'))
 subprocess.run([os.path.join(p9, 'bin/dump9660'), '-M', '-c9j', '-p', proto, '-s', tree, '-v', 'Plan9-wasm32 test', iso],
 	check=True, cwd=os.path.join(root, 'build/test'), env=dict(os.environ, PATH=os.path.join(p9, 'bin') + ':' + os.environ['PATH']))
 live = os.path.join(root, 'build/dist/live')
-for f in ['index.html', 'platform.js', '9wasm32.wasm', '9wasm32.fs']:
+for f in ['index.html', 'platform.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'sw.js', '9wasm32.wasm', '9wasm32.fs']:
 	shutil.copy2(os.path.join(live, f), out)
 open(os.path.join(out, 'plan9.ini'), 'w').write('cdboot=yes\niso=dist.iso\n')
 print('iso: %s (%d files, %d MB)' % (iso, len(files), os.path.getsize(iso) >> 20))
