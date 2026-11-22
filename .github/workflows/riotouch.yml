@@ -1,9 +1,10 @@
 name: Rio touch selection (wasm32 Chromium)
 
 on:
-  push:
+  pull_request:
     branches:
-      - feat/wasm32-touch-keyboard-fullscreen-20261122
+      - main
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
