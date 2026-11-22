@@ -60,6 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           export PLAN9="$HOME/plan9port"
+          mkdir -p build/test
           echo "Git commit: $(git rev-parse HEAD)"
           tools/test/run riotouch | tee build/test/actions-riotouch.log
           sha256sum build/live/9wasm32.wasm build/live/platform.js | tee build/test/compiled-sha256.txt
